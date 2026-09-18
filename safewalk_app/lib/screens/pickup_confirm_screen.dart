@@ -9,6 +9,7 @@ import '../theme/text_styles.dart';
 import '../widgets/guardian_alert_dialog.dart';
 import '../widgets/osm_map.dart';
 import 'active_walk_screen.dart';
+import 'destination_insights_screen.dart';
 import 'group_list_screen.dart';
 
 /// Last step before matching: shows the pickup point on a real map (where
@@ -134,6 +135,15 @@ class _PickupConfirmScreenState extends State<PickupConfirmScreen> {
         elevation: 0,
         iconTheme: const IconThemeData(color: SWColors.deepPurple),
         title: Text('Confirm Pickup', style: SWText.quicksand(size: 15, color: SWColors.deepPurple)),
+        actions: [
+          TextButton.icon(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => DestinationInsightsScreen(destination: widget.destination)),
+            ),
+            icon: const Icon(Icons.auto_awesome, size: 15, color: SWColors.violet),
+            label: Text('Ask AI', style: SWText.inter(size: 11, weight: FontWeight.w700, color: SWColors.violet)),
+          ),
+        ],
       ),
       body: SafeArea(
         top: false,

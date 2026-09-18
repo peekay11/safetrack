@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
 import '../config/api_config.dart';
 import '../mock_data.dart';
@@ -114,25 +115,18 @@ class _ActiveWalkScreenState extends State<ActiveWalkScreen> {
   Future<void> _sendSos(BuildContext context) async {
     final (lat, lng) = await LocationService.getCurrent();
     String message = 'Your Guardian Angels and walking group have been notified of your location.';
+    String? sosId;
     try {
       final res = await Api.triggerSos(latitude: lat, longitude: lng, groupId: widget.groupId);
       message = res['message'] as String? ?? message;
+      sosId = res['sos_id'] as String?;
     } on ApiException catch (e) {
       message = 'Could not reach the server: ${e.message}';
     }
     if (!context.mounted) return;
     showDialog<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('SOS alert sent', style: SWText.quicksand(size: 16, color: SWColors.danger)),
-        content: Text(message, style: SWText.inter(size: 13, color: SWColors.inkSoft)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text('OK', style: SWText.quicksand(size: 13, color: SWColors.violet)),
-          ),
-        ],
-      ),
+      builder: (ctx) => _SosAlertDialog(message: message, sosId: sosId),
     );
   }
 
@@ -361,6 +355,113 @@ class _ActiveWalkScreenState extends State<ActiveWalkScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// The post-SOS confirmation dialog, with an optional "record video
+/// evidence" step — captured while help is on the way and uploaded to R2,
+/// linked to the SOS event.
+class _SosAlertDialog extends StatefulWidget {
+  const _SosAlertDialog({required this.message, this.sosId});
+
+  final String message;
+  final String? sosId;
+
+  @override
+  State<_SosAlertDialog> createState() => _SosAlertDialogState();
+}
+
+class _SosAlertDialogState extends State<_SosAlertDialog> {
+  final _picker = ImagePicker();
+  bool _uploading = false;
+  bool _uploaded = false;
+  String? _error;
+
+  Future<void> _recordVideo() async {
+    final sosId = widget.sosId;
+    if (sosId == null) return;
+    final video = await _picker.pickVideo(source: ImageSource.camera, maxDuration: const Duration(seconds: 30));
+    if (video == null) return;
+
+    setState(() {
+      _uploading = true;
+      _error = null;
+    });
+    try {
+      final bytes = await video.readAsBytes();
+      await Api.uploadSosVideo(sosId, bytes, video.name);
+      if (!mounted) return;
+      setState(() => _uploaded = true);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _error = e.message);
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('SOS alert sent', style: SWText.quicksand(size: 16, color: SWColors.danger)),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(widget.message, style: SWText.inter(size: 13, color: SWColors.inkSoft)),
+          if (widget.sosId != null) ...[
+            const SizedBox(height: 14),
+            if (_uploaded)
+              Row(
+                children: [
+                  const Icon(Icons.check_circle, size: 16, color: SWColors.safe),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text('Video evidence attached to this SOS',
+                        style: SWText.inter(size: 11, weight: FontWeight.w700, color: SWColors.safe)),
+                  ),
+                ],
+              )
+            else
+              GestureDetector(
+                onTap: _uploading ? null : _recordVideo,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: SWColors.danger, width: 1.5),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      _uploading
+                          ? const SizedBox(
+                              height: 14, width: 14, child: CircularProgressIndicator(strokeWidth: 2, color: SWColors.danger))
+                          : const Icon(Icons.videocam, size: 16, color: SWColors.danger),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _uploading ? 'Uploading video…' : 'Record video evidence',
+                          style: SWText.inter(size: 11, weight: FontWeight.w700, color: SWColors.danger),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            if (_error != null) ...[
+              const SizedBox(height: 6),
+              Text(_error!, style: SWText.inter(size: 10, color: SWColors.danger)),
+            ],
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text('OK', style: SWText.quicksand(size: 13, color: SWColors.violet)),
+        ),
+      ],
     );
   }
 }

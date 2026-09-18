@@ -129,6 +129,43 @@ sosRoutes.post(
   }
 );
 
+// Attach a recorded video evidence clip to an active SOS event (stored in R2)
+sosRoutes.post('/:id/video', async (c) => {
+  const userId = await getUserId(c);
+  if (!userId) return c.json({ error: 'Unauthorized' }, 401);
+  const sosId = c.req.param('id');
+
+  const sos = await c.env.DB.prepare('SELECT id FROM sos_events WHERE id = ? AND user_id = ?')
+    .bind(sosId, userId)
+    .first();
+  if (!sos) return c.json({ error: 'SOS event not found' }, 404);
+
+  const body = await c.req.parseBody();
+  const file = body['file'];
+  if (!file || !(file instanceof File)) {
+    return c.json({ error: 'Valid video file is required' }, 400);
+  }
+
+  const extension = (file.type && file.type.split('/')[1]) || 'mp4';
+  const fileKey = `sos-videos/${sosId}-${Date.now()}.${extension}`;
+  const arrayBuffer = await file.arrayBuffer();
+
+  await c.env.BUCKET.put(fileKey, arrayBuffer, {
+    httpMetadata: { contentType: file.type || 'video/mp4' },
+  });
+
+  const videoUrl = `/uploads/${fileKey}`;
+  await c.env.DB.prepare('UPDATE sos_events SET video_url = ? WHERE id = ?')
+    .bind(videoUrl, sosId)
+    .run();
+
+  return c.json({
+    success: true,
+    message: 'Video evidence attached to SOS event',
+    video_url: videoUrl,
+  });
+});
+
 // Resolve or Mark False Alarm
 sosRoutes.post(
   '/:id/resolve',

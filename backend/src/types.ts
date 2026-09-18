@@ -2,6 +2,7 @@ export interface Env {
   DB: D1Database;
   CACHE_KV: KVNamespace;
   BUCKET: R2Bucket;
+  AI: Ai;
   ENVIRONMENT?: string;
   JWT_SECRET?: string;
   AFRICAS_TALKING_API_KEY?: string;
@@ -115,6 +116,7 @@ export interface SOSEvent {
   distress_message?: string;
   acknowledged_by?: string;
   acknowledged_at?: string;
+  video_url?: string;
   created_at: string;
 }
 

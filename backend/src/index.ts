@@ -16,6 +16,7 @@ import { ehailingRoutes } from './routes/ehailing';
 import { sosRoutes } from './routes/sos';
 import { safetyMapRoutes } from './routes/safetyMap';
 import { ussdRoutes } from './routes/ussd';
+import { insightsRoutes } from './routes/insights';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -50,6 +51,7 @@ app.get('/', (c) => {
       sos: '/api/sos',
       safety_map: '/api/safety-map',
       ussd: '/api/ussd',
+      insights: '/api/insights',
     },
   });
 });
@@ -86,6 +88,7 @@ app.route('/api/ehailing', ehailingRoutes);
 app.route('/api/sos', sosRoutes);
 app.route('/api/safety-map', safetyMapRoutes);
 app.route('/api/ussd', ussdRoutes);
+app.route('/api/insights', insightsRoutes);
 
 export { app };
 

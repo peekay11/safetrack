@@ -119,6 +119,7 @@ CREATE TABLE IF NOT EXISTS sos_events (
     distress_message TEXT,
     acknowledged_by TEXT, -- guardian angel name / id
     acknowledged_at DATETIME,
+    video_url TEXT, -- optional recorded evidence clip, uploaded after triggering
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id)
 );

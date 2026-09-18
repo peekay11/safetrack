@@ -15,6 +15,9 @@ id = "fc4b79df6356425b9588c917f5b5681f"
 binding = "BUCKET"
 bucket_name = "safetrack-uploads"
 
+[ai]
+binding = "AI"
+
 [vars]
 ENVIRONMENT = "production"
 JWT_SECRET = "safetrack-super-secure-production-secret-key-2026"

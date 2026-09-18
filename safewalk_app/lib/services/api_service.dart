@@ -189,6 +189,9 @@ class Api {
   static Future<Map<String, dynamic>> resolveSos(String sosId, {bool isFalseAlarm = false}) =>
       _c.post('/api/sos/$sosId/resolve', {'is_false_alarm': isFalseAlarm});
 
+  static Future<Map<String, dynamic>> uploadSosVideo(String sosId, Uint8List bytes, String filename) =>
+      _c.uploadFile('/api/sos/$sosId/video', fieldName: 'file', bytes: bytes, filename: filename);
+
   // --- E-Hailing Mode ------------------------------------------------------
 
   static Future<Map<String, dynamic>> startEhailing({
@@ -283,4 +286,27 @@ class Api {
           if (idNumber != null && idNumber.isNotEmpty) 'id_number': idNumber,
         },
       );
+
+  // --- AI Destination Insights ----------------------------------------------
+
+  static Future<Map<String, dynamic>> chatAboutDestination({
+    required String name,
+    String? category,
+    String? address,
+    required double latitude,
+    required double longitude,
+    required String message,
+    List<Map<String, String>>? history,
+  }) =>
+      _c.post('/api/insights/chat', {
+        'destination': {
+          'name': name,
+          if (category != null) 'category': category,
+          if (address != null) 'address': address,
+          'latitude': latitude,
+          'longitude': longitude,
+        },
+        'message': message,
+        if (history != null) 'history': history,
+      });
 }
