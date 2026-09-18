@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../mock_data.dart';
 import '../models.dart';
 import '../services/api_client.dart';
 import '../services/api_service.dart';
 import '../services/app_session.dart';
 import '../theme/colors.dart';
 import '../theme/text_styles.dart';
+import '../widgets/offline_banner.dart';
 import '../widgets/sw_icons.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -24,13 +26,24 @@ class _ChatScreenState extends State<ChatScreen> {
   List<ChatMessageModel> _messages = [];
   bool _closed = false;
   bool _loading = true;
+  bool _loadFailed = false;
   Timer? _pollTimer;
+
+  /// True only for the offline-demo groups created when matching failed —
+  /// never flips based on a transient network error for a real group, so a
+  /// real chat can never get silently swapped for fake dialogue.
+  bool get _isMockGroup => widget.groupId.startsWith('mock-');
 
   @override
   void initState() {
     super.initState();
-    _refresh();
-    _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) => _refresh());
+    if (_isMockGroup) {
+      _messages = buildMockChatMessages();
+      _loading = false;
+    } else {
+      _refresh();
+      _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) => _refresh());
+    }
   }
 
   @override
@@ -52,10 +65,17 @@ class _ChatScreenState extends State<ChatScreen> {
         _messages = messages;
         _closed = res['is_closed'] == true;
         _loading = false;
+        _loadFailed = false;
       });
       _scrollToBottom();
     } on ApiException {
-      if (mounted) setState(() => _loading = false);
+      if (!mounted) return;
+      // Keep whatever real messages we already have — never replace them
+      // with placeholder content. Just surface that the latest poll failed.
+      setState(() {
+        _loading = false;
+        _loadFailed = true;
+      });
     }
   }
 
@@ -75,12 +95,31 @@ class _ChatScreenState extends State<ChatScreen> {
     final trimmed = text.trim();
     if (trimmed.isEmpty || _closed) return;
     _controller.clear();
+
+    if (_isMockGroup) {
+      final me = AppSession.instance.currentUser;
+      setState(() => _messages = [
+            ..._messages,
+            ChatMessageModel(
+              id: 'local-${DateTime.now().microsecondsSinceEpoch}',
+              userId: me?.id ?? 'me',
+              userName: me?.fullName ?? 'You',
+              message: trimmed,
+              quickAction: quickAction,
+            ),
+          ]);
+      _scrollToBottom();
+      return;
+    }
+
+    // Always a real send for a real group — never a local-only echo, so a
+    // message never appears to send while actually being lost.
     try {
       await Api.sendMessage(widget.groupId, trimmed, quickAction: quickAction);
       await _refresh();
     } on ApiException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Message not sent: ${e.message}')));
     }
   }
 
@@ -117,13 +156,28 @@ class _ChatScreenState extends State<ChatScreen> {
                 ],
               ),
             ),
+            if (_isMockGroup)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                child: OfflineBanner(message: 'Demo mode — showing a sample conversation.'),
+              )
+            else if (_loadFailed)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                child: OfflineBanner(
+                  message: "Couldn't reach the server — retrying automatically.",
+                  onRetry: _refresh,
+                ),
+              ),
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator(color: SWColors.violet))
                   : _messages.isEmpty
                       ? Center(
-                          child: Text('No messages yet — say hi to your group',
-                              style: SWText.inter(size: 11, color: SWColors.inkSoft)),
+                          child: Text(
+                            _loadFailed ? 'Could not load messages yet' : 'No messages yet — say hi to your group',
+                            style: SWText.inter(size: 11, color: SWColors.inkSoft),
+                          ),
                         )
                       : ListView.builder(
                           controller: _scrollController,
@@ -131,6 +185,20 @@ class _ChatScreenState extends State<ChatScreen> {
                           itemCount: _messages.length,
                           itemBuilder: (context, i) {
                             final msg = _messages[i];
+                            if (isSystemChatMessage(msg)) {
+                              return Center(
+                                child: Container(
+                                  margin: const EdgeInsets.symmetric(vertical: 6),
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                                  decoration: BoxDecoration(
+                                    color: SWColors.deepPurple.withValues(alpha: 0.08),
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: Text(msg.message,
+                                      style: SWText.inter(size: 9, weight: FontWeight.w600, color: SWColors.deepPurple)),
+                                ),
+                              );
+                            }
                             final mine = msg.userId == myUserId;
                             return Align(
                               alignment: mine ? Alignment.centerRight : Alignment.centerLeft,

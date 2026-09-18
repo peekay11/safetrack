@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import '../config/api_config.dart';
 import '../services/app_session.dart';
 import '../theme/colors.dart';
 import '../theme/text_styles.dart';
 import '../widgets/glass_card.dart';
+import '../widgets/sw_avatar.dart';
 import '../widgets/sw_icons.dart';
 import 'destination_screen.dart';
 import 'guardians_screen.dart';
@@ -31,10 +33,33 @@ class HomeScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Good morning, $firstName 👋', style: SWText.quicksand(size: 19, color: SWColors.deepPurple)),
-                  const SizedBox(height: 2),
-                  Text('Ready to find your walking group?',
-                      style: SWText.inter(size: 12, color: SWColors.inkSoft)),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Good morning, $firstName 👋',
+                                style: SWText.quicksand(size: 19, color: SWColors.deepPurple)),
+                            const SizedBox(height: 2),
+                            Text('Ready to find your walking group?',
+                                style: SWText.inter(size: 12, color: SWColors.inkSoft)),
+                          ],
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: () => Navigator.of(context)
+                            .push(MaterialPageRoute(builder: (_) => const ProfileScreen())),
+                        child: SWAvatar(
+                          name: user?.fullName ?? '?',
+                          imageUrl: ApiConfig.mediaUrl(user?.selfieUrl),
+                          size: 44,
+                          verified: user?.verified ?? false,
+                          ringColor: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 18),
                   GlassCard(
                     onTap: () => Navigator.of(context).push(

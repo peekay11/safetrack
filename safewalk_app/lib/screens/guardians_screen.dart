@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../mock_data.dart';
 import '../models.dart';
 import '../services/api_client.dart';
 import '../services/api_service.dart';
 import '../theme/colors.dart';
 import '../theme/text_styles.dart';
+import '../widgets/offline_banner.dart';
 
 class GuardiansScreen extends StatefulWidget {
   const GuardiansScreen({super.key});
@@ -16,7 +18,7 @@ class GuardiansScreen extends StatefulWidget {
 class _GuardiansScreenState extends State<GuardiansScreen> {
   List<Guardian> _guardians = [];
   bool _loading = true;
-  String? _error;
+  bool _usingMock = false;
 
   @override
   void initState() {
@@ -31,12 +33,14 @@ class _GuardiansScreenState extends State<GuardiansScreen> {
       if (!mounted) return;
       setState(() {
         _guardians = guardians;
+        _usingMock = false;
         _loading = false;
       });
-    } on ApiException catch (e) {
+    } on ApiException {
       if (!mounted) return;
       setState(() {
-        _error = e.message;
+        _guardians = mockGuardians;
+        _usingMock = true;
         _loading = false;
       });
     }
@@ -51,6 +55,10 @@ class _GuardiansScreenState extends State<GuardiansScreen> {
   }
 
   Future<void> _remove(Guardian g) async {
+    if (g.id.startsWith('mock-')) {
+      setState(() => _guardians.removeWhere((x) => x.id == g.id));
+      return;
+    }
     try {
       await Api.removeGuardian(g.id);
       if (!mounted) return;
@@ -159,9 +167,9 @@ class _GuardiansScreenState extends State<GuardiansScreen> {
                     style: SWText.inter(size: 11, color: SWColors.inkSoft, height: 1.6),
                   ),
                   const SizedBox(height: 16),
-                  if (_error != null) ...[
-                    Text(_error!, style: SWText.inter(size: 11, color: SWColors.danger)),
-                    const SizedBox(height: 12),
+                  if (_usingMock) ...[
+                    OfflineBanner(onRetry: _load),
+                    const SizedBox(height: 4),
                   ],
                   for (final g in _guardians)
                     Container(

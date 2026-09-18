@@ -12,4 +12,12 @@ class ApiConfig {
     'API_BASE_URL',
     defaultValue: 'http://localhost:8787',
   );
+
+  /// Resolves an R2-backed media path (e.g. `/uploads/selfies/...` from the
+  /// verification endpoints) into an absolute URL against the backend.
+  static String? mediaUrl(String? path) {
+    if (path == null || path.isEmpty) return null;
+    if (path.startsWith('http://') || path.startsWith('https://')) return path;
+    return '$baseUrl$path';
+  }
 }

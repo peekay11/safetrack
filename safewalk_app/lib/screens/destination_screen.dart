@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import '../mock_data.dart';
 import '../models.dart';
 import '../services/api_client.dart';
 import '../services/api_service.dart';
 import '../services/location_service.dart';
 import '../theme/colors.dart';
 import '../theme/text_styles.dart';
+import '../widgets/offline_banner.dart';
 import 'active_walk_screen.dart';
 
 class DestinationScreen extends StatefulWidget {
@@ -16,7 +18,7 @@ class DestinationScreen extends StatefulWidget {
 
 class _DestinationScreenState extends State<DestinationScreen> {
   List<Destination>? _destinations;
-  String? _error;
+  bool _usingMock = false;
   String? _matchingId;
 
   @override
@@ -26,22 +28,28 @@ class _DestinationScreenState extends State<DestinationScreen> {
   }
 
   Future<void> _load() async {
+    setState(() {
+      _destinations = null;
+      _usingMock = false;
+    });
     try {
       final destinations = await Api.listDestinations();
       if (!mounted) return;
       setState(() => _destinations = destinations);
-    } on ApiException catch (e) {
+    } on ApiException {
       if (!mounted) return;
-      setState(() => _error = e.message);
+      setState(() {
+        _destinations = mockDestinations;
+        _usingMock = true;
+      });
     }
   }
 
   Future<void> _match(Destination destination) async {
-    setState(() {
-      _matchingId = destination.id;
-      _error = null;
-    });
+    setState(() => _matchingId = destination.id);
+    final isMockDestination = destination.id.startsWith('mock-');
     try {
+      if (isMockDestination) throw ApiException('offline demo destination');
       final (lat, lng) = await LocationService.getCurrent();
       final res = await Api.matchGroup(
         destinationId: destination.id,
@@ -54,11 +62,25 @@ class _DestinationScreenState extends State<DestinationScreen> {
           builder: (_) => ActiveWalkScreen(
             groupId: res['group_id'] as String,
             destinationName: destination.name,
+            destinationLat: destination.latitude,
+            destinationLng: destination.longitude,
           ),
         ),
       );
-    } on ApiException catch (e) {
-      setState(() => _error = e.message);
+    } on ApiException {
+      // Backend unreachable (or this is already an offline-demo destination) —
+      // still let the user walk through the experience with a demo group.
+      if (!mounted) return;
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => ActiveWalkScreen(
+            groupId: 'mock-group-${destination.id}',
+            destinationName: destination.name,
+            destinationLat: destination.latitude,
+            destinationLng: destination.longitude,
+          ),
+        ),
+      );
     } finally {
       if (mounted) setState(() => _matchingId = null);
     }
@@ -82,26 +104,14 @@ class _DestinationScreenState extends State<DestinationScreen> {
   }
 
   Widget _buildBody() {
-    if (_error != null && _destinations == null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(_error!, style: SWText.inter(size: 12, color: SWColors.danger), textAlign: TextAlign.center),
-        ),
-      );
-    }
     if (_destinations == null) {
       return const Center(child: CircularProgressIndicator(color: SWColors.violet));
-    }
-    if (_destinations!.isEmpty) {
-      return Center(
-        child: Text('No destinations available yet', style: SWText.inter(size: 12, color: SWColors.inkSoft)),
-      );
     }
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(18, 12, 18, 24),
       children: [
+        if (_usingMock) OfflineBanner(onRetry: _load),
         Text(
           'Pick where you’re headed — we’ll match you with others walking the same way.',
           style: SWText.inter(size: 11, color: SWColors.inkSoft, height: 1.6),
@@ -149,10 +159,6 @@ class _DestinationScreenState extends State<DestinationScreen> {
               ),
             ),
           ),
-        if (_error != null) ...[
-          const SizedBox(height: 8),
-          Text(_error!, style: SWText.inter(size: 11, color: SWColors.danger)),
-        ],
       ],
     );
   }

@@ -104,16 +104,28 @@ class GroupMemberModel {
     required this.userId,
     required this.fullName,
     this.safeCheckedIn = false,
+    this.pickupLat,
+    this.pickupLng,
+    this.selfieUrl,
+    this.verified = false,
   });
 
   final String userId;
   final String fullName;
   final bool safeCheckedIn;
+  final double? pickupLat;
+  final double? pickupLng;
+  final String? selfieUrl;
+  final bool verified;
 
   factory GroupMemberModel.fromJson(Map<String, dynamic> json) => GroupMemberModel(
         userId: json['user_id'] as String,
         fullName: json['full_name'] as String? ?? 'Member',
         safeCheckedIn: _asBool(json['safe_checked_in']),
+        pickupLat: json['pickup_lat'] == null ? null : _asDouble(json['pickup_lat']),
+        pickupLng: json['pickup_lng'] == null ? null : _asDouble(json['pickup_lng']),
+        selfieUrl: json['selfie_url'] as String?,
+        verified: _asBool(json['verified']),
       );
 }
 

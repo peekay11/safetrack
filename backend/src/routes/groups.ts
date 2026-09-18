@@ -159,9 +159,9 @@ groupRoutes.get('/:id', async (c) => {
     .bind(group.destination_id)
     .first();
 
-  // Get members with user profiles (names, selfie, extra time setting)
+  // Get members with user profiles (names, selfie, verification, extra time setting)
   const { results: members } = await c.env.DB.prepare(
-    `SELECT gm.*, u.full_name, u.selfie_url, u.needs_extra_time
+    `SELECT gm.*, u.full_name, u.selfie_url, u.verified, u.needs_extra_time
      FROM group_members gm
      JOIN users u ON gm.user_id = u.id
      WHERE gm.group_id = ?

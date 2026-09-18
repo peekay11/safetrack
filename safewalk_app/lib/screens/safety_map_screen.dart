@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:latlong2/latlong.dart';
+import '../mock_data.dart';
 import '../models.dart';
 import '../services/api_client.dart';
 import '../services/api_service.dart';
 import '../services/location_service.dart';
 import '../theme/colors.dart';
 import '../theme/text_styles.dart';
+import '../widgets/offline_banner.dart';
+import '../widgets/osm_map.dart';
 
 const _reasons = [
   ('poor_lighting', 'Poor lighting'),
@@ -36,6 +40,7 @@ class SafetyMapScreen extends StatefulWidget {
 class _SafetyMapScreenState extends State<SafetyMapScreen> {
   List<SafetyFlagModel> _flags = [];
   bool _loading = true;
+  bool _usingMock = false;
   double? _lat;
   double? _lng;
   bool _dropping = false;
@@ -56,11 +61,50 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
       if (!mounted) return;
       setState(() {
         _flags = flags;
+        _usingMock = false;
         _loading = false;
       });
     } on ApiException {
-      if (mounted) setState(() => _loading = false);
+      if (!mounted) return;
+      setState(() {
+        _flags = mockSafetyFlags;
+        _usingMock = true;
+        _loading = false;
+      });
     }
+  }
+
+  void _showFlagDetails(SafetyFlagModel flag) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(shape: BoxShape.circle, color: _severityColor(flag.severity)),
+                ),
+                const SizedBox(width: 8),
+                Text(flag.reason.replaceAll('_', ' '),
+                    style: SWText.quicksand(size: 14, color: SWColors.deepPurple)),
+              ],
+            ),
+            if (flag.description != null && flag.description!.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(flag.description!, style: SWText.inter(size: 11, color: SWColors.inkSoft, height: 1.5)),
+            ],
+            const SizedBox(height: 4),
+            Text('Severity: ${flag.severity}', style: SWText.inter(size: 10, color: SWColors.inkSoft)),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _dropFlag() async {
@@ -150,81 +194,26 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
       ),
       body: SafeArea(
         top: false,
-        child: _loading
+        child: _loading || _lat == null || _lng == null
             ? const Center(child: CircularProgressIndicator(color: SWColors.violet))
             : Column(
                 children: [
+                  if (_usingMock)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
+                      child: OfflineBanner(onRetry: _load),
+                    ),
                   Expanded(
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              gradient: RadialGradient(
-                                center: const Alignment(-0.5, -0.4),
-                                radius: 0.3,
-                                colors: [SWColors.danger.withValues(alpha: 0.18), Colors.transparent],
-                              ),
-                            ),
-                          ),
-                        ),
-                        Positioned.fill(
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              gradient: RadialGradient(
-                                center: const Alignment(0.2, 0.1),
-                                radius: 0.3,
-                                colors: [SWColors.orange.withValues(alpha: 0.18), Colors.transparent],
-                              ),
-                            ),
-                          ),
-                        ),
-                        if (_flags.isEmpty)
-                          Center(
-                            child: Text('No flagged spots nearby right now',
-                                style: SWText.inter(size: 11, color: SWColors.inkSoft)),
-                          )
-                        else
-                          ListView.builder(
-                            padding: const EdgeInsets.all(16),
-                            itemCount: _flags.length,
-                            itemBuilder: (context, i) {
-                              final flag = _flags[i];
-                              return Container(
-                                margin: const EdgeInsets.only(bottom: 8),
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  border: Border.all(color: SWColors.border),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Container(
-                                      width: 10,
-                                      height: 10,
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        color: _severityColor(flag.severity),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(flag.reason.replaceAll('_', ' '),
-                                              style: SWText.inter(size: 11, weight: FontWeight.w700, color: SWColors.ink)),
-                                          if (flag.description != null && flag.description!.isNotEmpty)
-                                            Text(flag.description!,
-                                                style: SWText.inter(size: 9.5, color: SWColors.inkSoft)),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
+                    child: SafeWalkMap(
+                      center: LatLng(_lat!, _lng!),
+                      zoom: 14,
+                      markers: [
+                        pinMarker(point: LatLng(_lat!, _lng!), color: SWColors.violet, size: 26),
+                        for (final flag in _flags)
+                          pinMarker(
+                            point: LatLng(flag.latitude, flag.longitude),
+                            color: _severityColor(flag.severity),
+                            onTap: () => _showFlagDetails(flag),
                           ),
                       ],
                     ),

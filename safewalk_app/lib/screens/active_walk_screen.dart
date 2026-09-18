@@ -1,22 +1,36 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:latlong2/latlong.dart';
+import '../config/api_config.dart';
+import '../mock_data.dart';
 import '../models.dart';
 import '../services/api_client.dart';
 import '../services/api_service.dart';
+import '../services/app_session.dart';
 import '../services/location_service.dart';
 import '../theme/colors.dart';
 import '../theme/text_styles.dart';
-import '../widgets/map_pin.dart';
+import '../widgets/offline_banner.dart';
+import '../widgets/osm_map.dart';
 import '../widgets/sos_safe_buttons.dart';
+import '../widgets/sw_avatar.dart';
 import 'chat_screen.dart';
 import 'confirm_screen.dart';
 import 'ehailing_screen.dart';
 
 class ActiveWalkScreen extends StatefulWidget {
-  const ActiveWalkScreen({super.key, required this.groupId, this.destinationName});
+  const ActiveWalkScreen({
+    super.key,
+    required this.groupId,
+    this.destinationName,
+    this.destinationLat,
+    this.destinationLng,
+  });
 
   final String groupId;
   final String? destinationName;
+  final double? destinationLat;
+  final double? destinationLng;
 
   @override
   State<ActiveWalkScreen> createState() => _ActiveWalkScreenState();
@@ -24,12 +38,21 @@ class ActiveWalkScreen extends StatefulWidget {
 
 class _ActiveWalkScreenState extends State<ActiveWalkScreen> {
   List<GroupMemberModel> _members = [];
+  bool _usingMock = false;
   Timer? _locationTimer;
   bool _checkingIn = false;
+  double? _myLat;
+  double? _myLng;
+  double? _destLat;
+  double? _destLng;
+
+  bool get _isMockGroup => widget.groupId.startsWith('mock-');
 
   @override
   void initState() {
     super.initState();
+    _destLat = widget.destinationLat;
+    _destLng = widget.destinationLng;
     _loadGroup();
     _shareLocation();
     _locationTimer = Timer.periodic(const Duration(seconds: 15), (_) => _shareLocation());
@@ -42,20 +65,45 @@ class _ActiveWalkScreenState extends State<ActiveWalkScreen> {
   }
 
   Future<void> _loadGroup() async {
+    if (_isMockGroup) {
+      setState(() {
+        _members = mockGroupMembers;
+        _usingMock = true;
+      });
+      return;
+    }
     try {
       final res = await Api.getGroup(widget.groupId);
       final members = (res['members'] as List)
           .map((e) => GroupMemberModel.fromJson(e as Map<String, dynamic>))
           .toList();
+      final destination = res['destination'] as Map<String, dynamic>?;
       if (!mounted) return;
-      setState(() => _members = members);
+      setState(() {
+        _members = members;
+        _usingMock = false;
+        if (destination != null) {
+          _destLat = (destination['latitude'] as num).toDouble();
+          _destLng = (destination['longitude'] as num).toDouble();
+        }
+      });
     } on ApiException {
-      // Roster stays empty if the fetch fails; SOS / chat / safe check-in still work.
+      if (!mounted) return;
+      setState(() {
+        _members = mockGroupMembers;
+        _usingMock = true;
+      });
     }
   }
 
   Future<void> _shareLocation() async {
     final (lat, lng) = await LocationService.getCurrent();
+    if (!mounted) return;
+    setState(() {
+      _myLat = lat;
+      _myLng = lng;
+    });
+    if (_isMockGroup) return;
     try {
       await Api.postGroupLocation(widget.groupId, lat, lng);
     } on ApiException {
@@ -88,6 +136,61 @@ class _ActiveWalkScreenState extends State<ActiveWalkScreen> {
     );
   }
 
+  void _showMemberProfile(GroupMemberModel m) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(16),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(color: SWColors.deepPurple.withValues(alpha: 0.2), blurRadius: 24, offset: const Offset(0, 10)),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SWAvatar(
+                name: m.fullName,
+                imageUrl: ApiConfig.mediaUrl(m.selfieUrl),
+                size: 84,
+                verified: m.verified,
+              ),
+              const SizedBox(height: 14),
+              Text(m.fullName, style: SWText.quicksand(size: 17, color: SWColors.deepPurple)),
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                decoration: BoxDecoration(
+                  color: (m.verified ? SWColors.safe : SWColors.orange).withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  m.verified ? '✅ Verified SafeWalk member' : '⏳ Not yet verified',
+                  style: SWText.inter(
+                    size: 10.5,
+                    weight: FontWeight.w700,
+                    color: m.verified ? SWColors.safe : SWColors.orange,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                m.safeCheckedIn ? 'Checked in safe' : 'Currently walking',
+                style: SWText.inter(size: 11, color: SWColors.inkSoft),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _checkInSafe() async {
     setState(() => _checkingIn = true);
     try {
@@ -104,9 +207,7 @@ class _ActiveWalkScreenState extends State<ActiveWalkScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final memberNames = _members.isEmpty
-        ? ['Finding your group…']
-        : _members.map((m) => m.fullName).toList();
+    final me = AppSession.instance.currentUser;
 
     return Scaffold(
       backgroundColor: const Color(0xFFEFE9F7),
@@ -145,80 +246,102 @@ class _ActiveWalkScreenState extends State<ActiveWalkScreen> {
                 ],
               ),
             ),
-            Expanded(
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: RadialGradient(
-                          center: const Alignment(-0.4, -0.4),
-                          radius: 0.8,
-                          colors: [SWColors.violet.withValues(alpha: 0.10), Colors.transparent],
-                        ),
-                      ),
-                    ),
-                  ),
-                  Positioned.fill(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: RadialGradient(
-                          center: const Alignment(0.4, 0.2),
-                          radius: 0.9,
-                          colors: [SWColors.pink.withValues(alpha: 0.08), Colors.transparent],
-                        ),
-                      ),
-                    ),
-                  ),
-                  const DecoratedBox(decoration: BoxDecoration(color: SWColors.lavender)),
-                  LayoutBuilder(builder: (context, c) {
-                    return Stack(
-                      children: [
-                        Positioned(
-                          top: c.maxHeight * 0.18,
-                          left: c.maxWidth * 0.38,
-                          child: const MapPin(color: SWColors.violet),
-                        ),
-                        Positioned(
-                          top: c.maxHeight * 0.32,
-                          left: c.maxWidth * 0.23,
-                          child: const MapPin(color: SWColors.pink),
-                        ),
-                        Positioned(
-                          top: c.maxHeight * 0.44,
-                          left: c.maxWidth * 0.57,
-                          child: const MapPin(color: SWColors.pink),
-                        ),
-                      ],
-                    );
-                  }),
-                ],
+            if (_usingMock)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                child: OfflineBanner(
+                  message: "Demo mode — showing a sample walking group.",
+                  onRetry: _isMockGroup ? null : _loadGroup,
+                ),
               ),
+            Expanded(
+              child: _myLat == null || _myLng == null
+                  ? const Center(child: CircularProgressIndicator(color: SWColors.violet))
+                  : SafeWalkMap(
+                      center: LatLng(
+                        _destLat ?? _myLat!,
+                        _destLng ?? _myLng!,
+                      ),
+                      zoom: 14,
+                      markers: [
+                        avatarMarker(
+                          point: LatLng(_myLat!, _myLng!),
+                          name: me?.fullName ?? 'You',
+                          imageUrl: ApiConfig.mediaUrl(me?.selfieUrl),
+                          ringColor: SWColors.violet,
+                          verified: me?.verified ?? false,
+                        ),
+                        if (_destLat != null && _destLng != null)
+                          pinMarker(point: LatLng(_destLat!, _destLng!), color: SWColors.deepPurple, size: 34),
+                        for (final m in _members)
+                          if (m.pickupLat != null && m.pickupLng != null)
+                            avatarMarker(
+                              point: LatLng(m.pickupLat!, m.pickupLng!),
+                              name: m.fullName,
+                              imageUrl: ApiConfig.mediaUrl(m.selfieUrl),
+                              verified: m.verified,
+                              onTap: () => _showMemberProfile(m),
+                            ),
+                      ],
+                    ),
             ),
             Container(
               color: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              child: GestureDetector(
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => ChatScreen(groupId: widget.groupId)),
-                ),
-                child: Row(
-                  children: memberNames
-                      .map((m) => Padding(
-                            padding: const EdgeInsets.only(right: 6),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                              decoration: BoxDecoration(
-                                color: SWColors.lavenderCard,
-                                border: Border.all(color: SWColors.border),
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Text(m,
-                                  style: SWText.inter(size: 10, weight: FontWeight.w600, color: SWColors.ink)),
-                            ),
-                          ))
-                      .toList(),
-                ),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  SizedBox(
+                    height: 46,
+                    width: _members.isEmpty ? 46 : 46 + (_members.length - 1) * 26.0,
+                    child: _members.isEmpty
+                        ? const SizedBox(
+                            width: 46,
+                            height: 46,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: SWColors.violet),
+                          )
+                        : Stack(
+                            children: [
+                              for (int i = 0; i < _members.length; i++)
+                                Positioned(
+                                  left: i * 26.0,
+                                  child: GestureDetector(
+                                    onTap: () => _showMemberProfile(_members[i]),
+                                    child: SWAvatar(
+                                      name: _members[i].fullName,
+                                      imageUrl: ApiConfig.mediaUrl(_members[i].selfieUrl),
+                                      size: 40,
+                                      verified: _members[i].verified,
+                                      ringColor: _members[i].safeCheckedIn ? SWColors.safe : Colors.white,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => ChatScreen(groupId: widget.groupId)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _members.isEmpty
+                                ? 'Finding your group…'
+                                : '${_members.length} walking with you',
+                            style: SWText.quicksand(size: 12.5, color: SWColors.deepPurple),
+                          ),
+                          const SizedBox(height: 2),
+                          Text('Tap to open group chat',
+                              style: SWText.inter(size: 9.5, color: SWColors.inkSoft)),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const Icon(Icons.chat_bubble_outline, color: SWColors.violet),
+                ],
               ),
             ),
             Container(

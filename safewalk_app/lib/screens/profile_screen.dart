@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
+import '../config/api_config.dart';
 import '../services/api_client.dart';
 import '../services/api_service.dart';
 import '../services/app_session.dart';
 import '../theme/colors.dart';
 import '../theme/text_styles.dart';
+import '../widgets/sw_avatar.dart';
 import '../widgets/sw_icons.dart';
 import 'auth_screen.dart';
 import 'resources_screen.dart';
+import 'verification_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -72,30 +75,71 @@ class _ProfileScreenState extends State<ProfileScreen> {
           children: [
             Row(
               children: [
-                Container(
-                  width: 52,
-                  height: 52,
-                  decoration: const BoxDecoration(color: SWColors.lavenderMid, shape: BoxShape.circle),
+                SWAvatar(
+                  name: user?.fullName ?? '?',
+                  imageUrl: ApiConfig.mediaUrl(user?.selfieUrl),
+                  size: 60,
+                  verified: user?.verified ?? false,
+                  ringColor: SWColors.lavenderMid,
                 ),
-                const SizedBox(width: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(user?.fullName ?? 'Your Name', style: SWText.quicksand(size: 15, color: SWColors.ink)),
-                    const SizedBox(height: 3),
-                    Text(
-                      user?.phoneNumber ?? '',
-                      style: SWText.inter(size: 11, color: SWColors.inkSoft),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      (user?.verified ?? false) ? '✅ Verified' : '⏳ Not yet verified',
-                      style: SWText.inter(size: 11, color: SWColors.inkSoft),
-                    ),
-                  ],
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(user?.fullName ?? 'Your Name', style: SWText.quicksand(size: 15, color: SWColors.ink)),
+                      const SizedBox(height: 3),
+                      Text(
+                        user?.phoneNumber ?? '',
+                        style: SWText.inter(size: 11, color: SWColors.inkSoft),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        (user?.verified ?? false) ? '✅ Verified' : '⏳ Not yet verified',
+                        style: SWText.inter(size: 11, color: SWColors.inkSoft),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
+            if (user?.selfieUrl == null) ...[
+              const SizedBox(height: 14),
+              GestureDetector(
+                onTap: () => Navigator.of(context)
+                    .push(MaterialPageRoute(builder: (_) => const VerificationScreen()))
+                    .then((_) => _refresh()),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(colors: [SWColors.violet, SWColors.pink]),
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(color: SWColors.deepPurple.withValues(alpha: 0.2), blurRadius: 12, offset: const Offset(0, 4)),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.camera_alt_rounded, color: Colors.white, size: 20),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Add a profile photo',
+                                style: SWText.quicksand(size: 12.5, color: Colors.white)),
+                            const SizedBox(height: 2),
+                            Text('So your walking group can recognise you',
+                                style: SWText.inter(size: 9.5, color: Colors.white.withValues(alpha: 0.9))),
+                          ],
+                        ),
+                      ),
+                      const Icon(Icons.chevron_right, color: Colors.white),
+                    ],
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 22),
             Text('Walk History', style: SWText.quicksand(size: 13, color: SWColors.deepPurple)),
             const SizedBox(height: 10),
