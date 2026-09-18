@@ -67,14 +67,29 @@ class Api {
   }
 
   static Future<Map<String, dynamic>> matchGroup({
-    required String destinationId,
+    String? destinationId,
+    String? customDestinationName,
+    double? customDestinationLat,
+    double? customDestinationLng,
+    String? customDestinationAddress,
     required double latitude,
     required double longitude,
+    String groupType = 'walk',
+    String? taxiPlate,
   }) =>
       _c.post('/api/groups/match', {
-        'destination_id': destinationId,
+        if (destinationId != null) 'destination_id': destinationId,
+        if (destinationId == null && customDestinationName != null)
+          'custom_destination': {
+            'name': customDestinationName,
+            'latitude': customDestinationLat,
+            'longitude': customDestinationLng,
+            if (customDestinationAddress != null) 'address': customDestinationAddress,
+          },
         'latitude': latitude,
         'longitude': longitude,
+        'group_type': groupType,
+        if (taxiPlate != null) 'taxi_plate': taxiPlate,
       });
 
   static Future<Map<String, dynamic>> getGroup(String groupId) => _c.get('/api/groups/$groupId');

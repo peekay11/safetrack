@@ -1,10 +1,60 @@
-import { Hono } from 'hono';
+import { Context, Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { Env } from '../types';
 import { haversineDistanceMeters } from '../utils/geo';
+import { sendSms } from '../utils/sms';
 
 export const groupRoutes = new Hono<{ Bindings: Env }>();
+
+// South African minibus taxis seat 16 total including the driver.
+const TAXI_CAPACITY = 15;
+const WALK_CAPACITY = 6;
+const WALK_MIN_GROUP_SIZE = 3;
+const TAXI_MIN_GROUP_SIZE = 2;
+
+function normalizePlate(plate: string): string {
+  return plate.toUpperCase().replace(/\s+/g, '');
+}
+
+/**
+ * Alerts the user's Guardian Angels with the trip's drop-off point when no
+ * group could be found — the "escort fallback" safety net. SMS is mocked
+ * (see utils/sms.ts) when no real gateway credentials are configured, which
+ * is always true for this demo deployment.
+ */
+async function notifyGuardiansOfFallback(
+  c: Context<{ Bindings: Env }>,
+  userId: string,
+  destinationName: string,
+  destinationAddress: string | null,
+  modeLabel: string
+): Promise<{ notified_guardians: { name: string; phone_number: string }[]; message_preview: string }> {
+  const user = await c.env.DB.prepare('SELECT full_name FROM users WHERE id = ?')
+    .bind(userId)
+    .first<{ full_name: string }>();
+
+  const { results: guardians } = await c.env.DB.prepare(
+    'SELECT name, phone_number FROM guardian_angels WHERE user_id = ?'
+  )
+    .bind(userId)
+    .all();
+
+  const dropOff = destinationAddress ? `${destinationName} (${destinationAddress})` : destinationName;
+  const message = `[SafeWalk Escort Alert] ${user?.full_name || 'Your contact'} could not find a ${modeLabel} group and is walking solo. Drop-off point: ${dropOff}. Please check in with them.`;
+
+  for (const g of guardians as any[]) {
+    if (g.phone_number) {
+      // Mocked: simultaneously "sent" as SMS and WhatsApp in this demo environment.
+      await sendSms(c.env, { to: g.phone_number, message });
+    }
+  }
+
+  return {
+    notified_guardians: guardians as any[],
+    message_preview: message,
+  };
+}
 
 async function getUserId(c: any): Promise<string | null> {
   const authHeader = c.req.header('Authorization');
@@ -23,15 +73,26 @@ groupRoutes.get('/destinations', async (c) => {
 });
 
 // Find or Match into a Group
-// Rule: destination match + proximity (100-500m) + opaque candidate matching
+// walk mode: destination match + proximity (100-500m) + opaque candidate matching
+// taxi mode: destination match + same number plate (everyone is literally in the vehicle already)
 groupRoutes.post(
   '/match',
   zValidator(
     'json',
     z.object({
-      destination_id: z.string(),
+      destination_id: z.string().optional(),
+      custom_destination: z
+        .object({
+          name: z.string().min(2),
+          latitude: z.number(),
+          longitude: z.number(),
+          address: z.string().optional(),
+        })
+        .optional(),
       latitude: z.number(),
       longitude: z.number(),
+      group_type: z.enum(['walk', 'taxi']).default('walk'),
+      taxi_plate: z.string().min(3).optional(),
       planned_departure_time: z.string().optional(),
     })
   ),
@@ -39,37 +100,82 @@ groupRoutes.post(
     const userId = await getUserId(c);
     if (!userId) return c.json({ error: 'Unauthorized' }, 401);
 
-    const { destination_id, latitude, longitude, planned_departure_time } = c.req.valid('json');
+    const data = c.req.valid('json');
 
-    // 1. Find forming groups for this destination
-    const { results: candidateGroups } = await c.env.DB.prepare(
-      `SELECT g.* FROM groups g WHERE g.destination_id = ? AND g.status = 'forming' ORDER BY g.created_at ASC`
-    )
-      .bind(destination_id)
+    if (!data.destination_id && !data.custom_destination) {
+      return c.json({ error: 'destination_id or custom_destination is required' }, 400);
+    }
+    if (data.group_type === 'taxi' && !data.taxi_plate) {
+      return c.json({ error: 'taxi_plate is required for group_type = taxi' }, 400);
+    }
+
+    // 0. Resolve destination — create one on the fly for a user-entered spot
+    let destinationId = data.destination_id;
+    if (!destinationId && data.custom_destination) {
+      destinationId = `dest_custom_${crypto.randomUUID()}`;
+      await c.env.DB.prepare(
+        `INSERT INTO destinations (id, name, category, latitude, longitude, address, active)
+         VALUES (?, ?, 'custom', ?, ?, ?, 1)`
+      )
+        .bind(
+          destinationId,
+          data.custom_destination.name,
+          data.custom_destination.latitude,
+          data.custom_destination.longitude,
+          data.custom_destination.address || null
+        )
+        .run();
+    }
+
+    const destination = await c.env.DB.prepare('SELECT * FROM destinations WHERE id = ?')
+      .bind(destinationId)
+      .first<{ name: string; address: string | null }>();
+
+    const isTaxi = data.group_type === 'taxi';
+    const capacity = isTaxi ? TAXI_CAPACITY : WALK_CAPACITY;
+    const minGroupSize = isTaxi ? TAXI_MIN_GROUP_SIZE : WALK_MIN_GROUP_SIZE;
+    const taxiPlate = isTaxi && data.taxi_plate ? normalizePlate(data.taxi_plate) : null;
+
+    // 1. Find forming/active groups for this destination (+ same taxi, if taxi mode)
+    const candidateQuery = isTaxi
+      ? `SELECT g.* FROM groups g WHERE g.destination_id = ? AND g.group_type = 'taxi' AND g.taxi_plate = ? AND g.status IN ('forming', 'active') ORDER BY g.created_at ASC`
+      : `SELECT g.* FROM groups g WHERE g.destination_id = ? AND g.group_type = 'walk' AND g.status = 'forming' ORDER BY g.created_at ASC`;
+    const candidateBindings = isTaxi ? [destinationId, taxiPlate] : [destinationId];
+
+    const { results: candidateGroups } = await c.env.DB.prepare(candidateQuery)
+      .bind(...candidateBindings)
       .all();
 
     let matchedGroupId: string | null = null;
     let pickupOrder = 1;
 
     for (const group of candidateGroups) {
-      // Get current members of this group
       const { results: members } = await c.env.DB.prepare(
         'SELECT * FROM group_members WHERE group_id = ?'
       )
         .bind(group.id)
         .all();
 
-      // Check if user is already in this group
+      // Already in this group (e.g. re-matching)
       if (members.some((m: any) => m.user_id === userId)) {
         matchedGroupId = group.id as string;
         break;
       }
 
-      // If group has members, check proximity to existing members or route
-      // Proximity threshold: 100m to 500m (or up to 1000m for forming pilot)
+      if (isTaxi) {
+        // Same plate + same destination already means "same vehicle" — no
+        // proximity check needed, just seat availability.
+        if (members.length < capacity) {
+          matchedGroupId = group.id as string;
+          pickupOrder = members.length + 1;
+          break;
+        }
+        continue;
+      }
+
+      // Walk mode: proximity threshold 100–800m to existing pickup points
       let fitsInGroup = true;
       if (members.length > 0) {
-        // Check distance to closest existing pickup
         const minDistance = Math.min(
           ...members.map((m: any) =>
             m.pickup_lat && m.pickup_lng
@@ -77,14 +183,10 @@ groupRoutes.post(
               : 0
           )
         );
-
-        if (minDistance > 800) {
-          fitsInGroup = false;
-        }
+        if (minDistance > 800) fitsInGroup = false;
       }
 
-      // Max group capacity e.g. 6 members for a safe walking pack
-      if (fitsInGroup && members.length < 6) {
+      if (fitsInGroup && members.length < capacity) {
         matchedGroupId = group.id as string;
         pickupOrder = members.length + 1;
         break;
@@ -95,11 +197,21 @@ groupRoutes.post(
     if (!matchedGroupId) {
       matchedGroupId = `grp_${crypto.randomUUID()}`;
       await c.env.DB.prepare(
-        `INSERT INTO groups (id, destination_id, status, departure_time) VALUES (?, ?, 'forming', ?)`
+        `INSERT INTO groups (id, destination_id, group_type, taxi_plate, capacity, status, departure_time)
+         VALUES (?, ?, ?, ?, ?, 'forming', ?)`
       )
-        .bind(matchedGroupId, destination_id, planned_departure_time || new Date().toISOString())
+        .bind(
+          matchedGroupId,
+          destinationId,
+          data.group_type,
+          taxiPlate,
+          capacity,
+          data.planned_departure_time || new Date().toISOString()
+        )
         .run();
     }
+
+    const { latitude, longitude } = data;
 
     // 3. Add or update user in group_members
     const memberId = `gm_${crypto.randomUUID()}`;
@@ -118,11 +230,9 @@ groupRoutes.post(
       .first<{ count: number }>();
 
     const memberCount = countRes?.count || 1;
-    // Minimum 3+ for a confirmed safe group
-    const meetsMinimumGroupSize = memberCount >= 3;
+    const meetsMinimumGroupSize = memberCount >= minGroupSize;
 
     if (meetsMinimumGroupSize) {
-      // Group reaches 3+ threshold, can become 'active' if departure is now
       await c.env.DB.prepare("UPDATE groups SET status = 'active' WHERE id = ? AND status = 'forming'")
         .bind(matchedGroupId)
         .run();
@@ -132,16 +242,34 @@ groupRoutes.post(
       .bind(matchedGroupId)
       .first();
 
+    // 4. No group found yet — alert the user's Guardian Angels with the
+    // drop-off point as an escort-fallback safety net (mocked SMS/WhatsApp).
+    let guardianNotification: Awaited<ReturnType<typeof notifyGuardiansOfFallback>> | null = null;
+    if (!meetsMinimumGroupSize) {
+      guardianNotification = await notifyGuardiansOfFallback(
+        c,
+        userId,
+        destination?.name || 'your destination',
+        destination?.address || null,
+        isTaxi ? 'taxi' : 'walking'
+      );
+    }
+
     return c.json({
       success: true,
       group_id: matchedGroupId,
       group: groupDetails,
+      destination_id: destinationId,
       member_count: memberCount,
+      capacity,
       meets_minimum_group_size: meetsMinimumGroupSize,
       fallback_to_guardian: !meetsMinimumGroupSize,
+      guardian_notification: guardianNotification,
       message: meetsMinimumGroupSize
-        ? 'Group confirmed with 3+ members'
-        : 'Finding group members... Guardian Angel escort fallback ready.',
+        ? `Group confirmed with ${memberCount} member${memberCount === 1 ? '' : 's'}`
+        : isTaxi
+          ? 'No one else in this taxi yet — your Guardian Angel has been alerted.'
+          : 'Finding group members... Guardian Angel escort fallback ready.',
     });
   }
 );

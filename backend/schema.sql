@@ -42,10 +42,13 @@ CREATE TABLE IF NOT EXISTS destinations (
     active INTEGER DEFAULT 1
 );
 
--- Active & Scheduled Walking Groups
+-- Active & Scheduled Walking / Taxi Groups
 CREATE TABLE IF NOT EXISTS groups (
     id TEXT PRIMARY KEY,
     destination_id TEXT NOT NULL,
+    group_type TEXT NOT NULL DEFAULT 'walk', -- walk, taxi
+    taxi_plate TEXT, -- normalized vehicle registration, set when group_type = 'taxi'
+    capacity INTEGER NOT NULL DEFAULT 6, -- 6 for a walking pack, 15 riders (+1 driver = 16) for a taxi
     status TEXT NOT NULL DEFAULT 'forming', -- forming, active, completed, cancelled
     departure_time DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

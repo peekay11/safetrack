@@ -52,6 +52,9 @@ export interface Destination {
 export interface Group {
   id: string;
   destination_id: string;
+  group_type: 'walk' | 'taxi';
+  taxi_plate?: string;
+  capacity: number;
   status: 'forming' | 'active' | 'completed' | 'cancelled';
   departure_time?: string;
   created_at: string;

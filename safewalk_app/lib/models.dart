@@ -99,6 +99,34 @@ class Destination {
       );
 }
 
+/// A destination the user is about to match into a group for — either one
+/// picked from the preset list, or one they entered themselves (name +
+/// a point dropped on the map).
+class SelectedDestination {
+  SelectedDestination.preset(Destination d)
+      : id = d.id,
+        name = d.name,
+        latitude = d.latitude,
+        longitude = d.longitude,
+        address = d.address,
+        isCustom = false;
+
+  const SelectedDestination.custom({
+    required this.name,
+    required this.latitude,
+    required this.longitude,
+    this.address,
+  })  : id = null,
+        isCustom = true;
+
+  final String? id;
+  final String name;
+  final double latitude;
+  final double longitude;
+  final String? address;
+  final bool isCustom;
+}
+
 class GroupMemberModel {
   GroupMemberModel({
     required this.userId,
