@@ -1,0 +1,359 @@
+# SafeWalk — Project Documentation
+
+*A walking-group safety app for women, matching users into morning/evening groups based on shared destinations, with Guardian Angel escort fallback and route intelligence.*
+
+Prepared for hackathon final submission.
+
+---
+
+## 1. Overview
+
+SafeWalk solves the "walking alone" safety gap for women who travel on foot to shared destinations (taxi ranks, malls, stations) during low-visibility hours. Instead of a single panic-button app, SafeWalk proactively groups people heading the same way, layers in trusted "Guardian Angel" contacts as a fallback, and builds a live community-informed safety map over time.
+
+---
+
+## 2. Tech Stack
+
+| Layer | Choice | Why |
+|---|---|---|
+| Mobile framework | **React Native + Expo** | Single codebase for iOS and Android; Expo Go allows instant live preview on a real phone via QR code — critical for a hackathon build/demo cycle |
+| Navigation | **React Navigation** (native-stack) | Standard, well-documented routing between screens |
+| Backend / database | **Firebase** (Firestore + Auth + Storage) | No custom server needed; real-time data sync out of the box; generous free tier |
+| Authentication | **Firebase Auth (Phone)** | Matches how users would actually sign up in South Africa; avoids building custom auth |
+| Live location | **expo-location** | Foreground + background GPS tracking, permission handling built in |
+| Maps & routing | **react-native-maps** + Google Maps Directions API (walking mode) | Native map rendering; Directions API needed for actual route calculation (V2) |
+| Camera (selfie verification) | **expo-camera** | In-app selfie capture, front-facing, prevents uploading a pre-existing photo |
+| Document upload (ID) | **expo-image-picker** | Simple photo picker for ID document capture |
+| Push notifications | **expo-notifications** + Firebase Cloud Messaging | Check-in alerts, approach alerts, SOS notifications to Guardian Angels |
+| Server-side logic (matching, escalation timers) | **Firebase Cloud Functions** | Runs group-matching, checkpoint-timeout, and no-response-escalation logic without managing a server |
+| Distance calculation | **Haversine formula (custom JS)** | Used for the 100–500m group eligibility rule and checkpoint proximity checks |
+| USSD gateway (V2 / architecture only) | **Africa's Talking or telco USSD API** | Enables phone-lost incident reporting from any basic phone; not implemented in the current prototype, documented as a required integration for a real pilot |
+| SMS alerts | **Twilio or Africa's Talking SMS API** | Sends E-Hailing Mode alerts to Guardian Angels without requiring the SafeWalk app; simple REST integration, buildable for hackathon demo |
+| WhatsApp alerts (V2) | **WhatsApp Business API** (via Meta or Twilio/Africa's Talking) | Same purpose as SMS alerts, but requires business verification/API approval — documented as intended production channel, not implemented for hackathon demo |
+| Localization / multilingual support | **i18next + react-i18next**, with **expo-localization** for device language detection | Standard React Native i18n solution; translation files per language, swaps UI text based on user's selected/detected language |
+
+### Why this stack for a hackathon specifically
+- **Speed:** Firebase removes the need to build/host a backend from scratch — auth, database, storage, and functions are all managed.
+- **Phone preview:** Expo Go means judges (or you) can see the live app on a real device in seconds, without app store submission or native build tooling.
+- **Shared web/mobile skills:** If your team knows JavaScript/React, React Native reuses that knowledge almost directly.
+
+### Known limitation
+The **silent SOS trigger (volume-button x3)** requires a native module, which isn't available in plain Expo Go — it needs an **Expo Dev Build**. For demo day, an on-screen SOS button is used as the visible equivalent; the volume-trigger mechanism is documented as a near-term technical next step.
+
+---
+
+## 3. System Architecture
+
+```
+┌─────────────────────┐
+│   Mobile App (RN)    │
+│  iOS + Android via   │
+│      Expo Go         │
+└──────────┬───────────┘
+           │
+           │  Firebase SDK
+           ▼
+┌─────────────────────────────────────────┐
+│                Firebase                   │
+│  ┌───────────┐ ┌───────────┐ ┌─────────┐ │
+│  │  Firestore │ │    Auth    │ │ Storage │ │
+│  │ (users,    │ │  (phone)   │ │(selfies,│ │
+│  │  groups,   │ │            │ │  ID docs)│ │
+│  │  flags,    │ │            │ │         │ │
+│  │  history)  │ │            │ │         │ │
+│  └───────────┘ └───────────┘ └─────────┘ │
+│  ┌─────────────────────────────────────┐ │
+│  │       Cloud Functions                 │ │
+│  │  - Group matching                     │ │
+│  │  - Checkpoint timeout / reroute       │ │
+│  │  - No-response escalation timers      │ │
+│  │  - Push notification dispatch (FCM)   │ │
+│  └─────────────────────────────────────┘ │
+└─────────────────────────────────────────┘
+           │
+           ▼
+┌─────────────────────┐
+│  Google Maps API      │
+│  (Directions, walking  │
+│   mode routing)        │
+└─────────────────────┘
+```
+
+---
+
+## 4. Feature-to-Implementation Map
+
+### 4.1 Group Formation
+- Fixed destination list, seeded per pilot area (taxi ranks, stations, malls).
+- Users matched by destination + proximity to route (100–500m rule), calculated via Haversine distance.
+- Minimum group size: 3+. Below that, Guardian Angel fallback triggers.
+- Matching is opaque — no visibility into the candidate pool before a group is confirmed, to prevent targeting.
+
+### 4.2 Verification & Trust
+- Mandatory in-app selfie (liveness, not an uploaded photo).
+- SA ID, driver's license, or passport accepted for identity documents. The ID number field itself defaults to an SA ID number, with **passport number accepted as an optional alternative** in that same field for users who don't have an SA ID or driver's license.
+- Custom (one-off) Guardian Angels verified via selfie + ID number for same-day use.
+- Group history stored with member name, profile picture, and checkpoint timestamps — for evidence purposes without full continuous location logging.
+- Peer reviews after each walk.
+- Up to 4 saved Guardian Angels, gender-specified per contact, user-configurable rules (e.g. "male family only after dark").
+
+### 4.3 Real-Time Safety
+- Live location shared within an active group.
+- Approach alert at ~200m from destination; arrival triggers an "I am safe" check-in button.
+- Tiered no-response escalation: minutes-scale alert during an active walk, hours-scale for a missed return walk, 24-hour scale reserved for general inactivity (not tied to an active walk).
+- Silent SOS (volume-down x3 in production; on-screen button in this prototype) sends live location + a pre-set distress message template to Guardian Angels. Accidental triggers can be marked as such after the fact.
+- First-user Guardian Angel escort until group join, with an **explicit confirm action** required for handoff (not GPS proximity alone).
+- 1-minute checkpoint wait timer (starts when a member marks "I arrived" at another's door); if missed, the group reroutes and the skipped member is auto-matched to another group at a similar time, or falls into the Guardian Angel fallback path.
+
+### 4.4 Scheduling
+- User sets planned departure time; app estimates and alerts the next group member when the previous one is expected to pass their house.
+- No-group-found fallback: ~30 minutes before expected departure/stop time with no group, app prompts a call to a saved Guardian Angel, then a custom Guardian Angel if unavailable.
+
+### 4.5 Route Intelligence
+- Default routing avoids isolated areas.
+- **V2 (not built for hackathon demo):** dynamic mid-walk rerouting with drop-off points and auto check-ins when a group splits.
+- Unsafe-spot mapping: manual pin flags (dropdown reason, rate-limited, trust-weighted) + SOS-triggered flags (weighted more heavily). Color-coded zones (red / orange / clear) based on flag density within a defined radius and time window. "No data" treated as unknown, not safe. Flags decay over time. Maps kept in-app only, not public, to avoid area stigma.
+
+### 4.6 USSD Incident Reporting (phone-lost / no-smartphone fallback)
+
+**Problem it solves:** if a user's phone is lost, stolen, or damaged during an incident, the app itself becomes unreachable right when it's needed most. USSD works on any basic phone with cell signal, needs no data connection, and doesn't require the SafeWalk app to be installed — so a bystander, or the victim from a borrowed phone, can still file a report.
+
+**Menu flow:**
+```
+Dial USSD short code
+  → Enter ID number (identifies the user regardless of whose phone is used)
+  → 1. Report incident — group member
+  → 2. Report incident — other/stranger
+  → 3. Request emergency contact
+```
+
+**Identification — ID number, not phone number:**
+- The report is tied to the user's **ID number**, entered manually at the start of the USSD session — not the phone number the session is dialed from.
+- This matters because the entire point of USSD is covering the "lost/stolen phone" scenario: a phone-number lookup would only ever identify whoever's *device* is being used, not the actual victim, if she's borrowing someone else's phone.
+- **Primary expected flow:** the victim borrows any available phone and dials the USSD code herself, entering her own ID number — since she knows it, this is fast and reliable, and doesn't depend on trusting a bystander to know or find it.
+- **Note on passport numbers:** SA ID and driver's license numbers are purely numeric, which is quick to enter on a USSD numeric keypad. **Passport number is accepted as an optional alternative** in the same ID-number field, for users without an SA ID or driver's license — typically alphanumeric, so entry is slightly slower (multi-tap text input) but still workable. This is documented here so the UX difference is acknowledged rather than assumed identical across document types.
+- **Open limitation:** if the victim is incapacitated and unable to dial herself, a bystander reporting on her behalf would need to know or physically find her ID number (e.g. reading it off a physical ID document) — this scenario is not fully solved and is documented here as a known gap, not a claimed capability.
+- **Abuse consideration:** an ID number can be known by people outside a victim's trusted circle (family, an ex-partner, acquaintances), so a report filed purely by ID number entry is not treated as fully authenticated on its own — Guardian Angels are asked to confirm legitimacy as part of their response, rather than the system auto-escalating on ID number alone.
+
+**Within-group report:**
+- System automatically looks up the most recent active walk tied to the entered ID number — no need to recall a group ID under stress.
+- User selects which group member the report concerns, from a numbered list pulled from that walk's roster, with a final **"All"** option if the report concerns the whole group or the reporter can't specify.
+- **Pickup-order confirmation, pulled from the app's own records — not asked from memory:** since checkpoint timestamps are already logged as each member is picked up, the USSD flow presents the walk's actual pickup sequence back to the user as a short numbered list (e.g. "1. Lindiwe was picked up first, 2. Naledi second") so she selects the relevant point rather than having to recall and type it herself. **This is a deliberate design choice, not just a convenience: asking someone in an acute trauma state to accurately reconstruct and type an ordered sequence from memory is unreliable and adds unnecessary burden in the moment** — the app already has this information logged, so it should carry that weight, not the victim.
+- This also covers the "All" case more precisely — knowing the pickup order at the time of the incident clarifies exactly which members were actually present, since someone picked up after the incident clearly wasn't there for it.
+- Menu also allows selecting "between two pickups" (e.g. "between stop 2 and 3") for incidents that happened mid-route rather than at a specific pickup moment.
+
+**Outside-group ("other") report:**
+- Free-text description of the stranger (kept short — USSD sessions cap around 160–182 characters per screen — prompted as "Describe briefly: clothing, build, location").
+- Feeds directly into the unsafe-zone flagging system as a high-confidence, location-tied incident signal.
+
+**Escalation chain (identical trigger regardless of report type):**
+```
+USSD report filed (identified by ID number)
+        ↓
+All 4 Guardian Angels notified SIMULTANEOUSLY
+   (in-app "Received — I'm on it" acknowledgment, not a phone call answer,
+    since reliability of a call being answered mid-crisis can't be assumed)
+        ↓
+Shared response window (2–3 minutes)
+        ↓ (no Guardian Angel acknowledges in time)
+App automatically calls and/or sends a notification to emergency services
++ internal incident log, NOT a real SAPS API integration (out of scope for
+hackathon build; would require a formal partnership to do properly)
+```
+
+**Why Guardian Angels are the primary responder, not police, by design:**
+Guardian Angels have context and a personal relationship with the user that the system doesn't. They can filter false alarms, call the victim directly, or check in with a bystander before deciding whether police involvement is actually warranted — avoiding unnecessary emergency-response trauma or wasted resources on a false alarm. Police are only looped in automatically as a last resort, when every trusted contact has failed to respond — not as the system's default first action.
+
+**Note:** this feature is designed at the specification level for this submission. Actual USSD gateway integration (e.g. via Africa's Talking or a mobile network operator) is a real-world infrastructure/partnership requirement and is documented here as architecture, not as a built component in the current prototype.
+
+### 4.7 E-Hailing Mode
+
+**Concept:** when a user starts an e-hailing trip (Uber, Bolt, or similar), SafeWalk enters a dedicated safety mode that shares the user's live location with their Guardian Angels for the duration of the ride, and allows a check against BlackLyst for whether the assigned driver has prior reports.
+
+**Trigger:** manually started by the user in-app ("Start E-Hailing Mode") before or as the ride begins. There is no public API from Uber/Bolt to automatically detect a rider's active trip or pull driver details, so this cannot be automated in the current build — the user (or the SOS/guardian flow) initiates it directly.
+
+**What happens once active:**
+- Live location shared continuously with the user's Guardian Angels, same mechanism as an active walking group.
+- On activation, the app sends an alert **via SMS and WhatsApp** to Guardian Angels (not just an in-app push), so they don't need the SafeWalk app open — or even installed — to be notified.
+- User can optionally enter the driver's name and/or vehicle registration (as shown in the e-hailing app before the trip) to check against BlackLyst.
+- SOS button remains available throughout the trip, same silent-trigger behavior as during a walk.
+- On trip completion, user taps "I am safe" — same check-in pattern used elsewhere in the app.
+
+**Alert delivery — SMS (MVP) and WhatsApp (V2):**
+
+| Channel | Status | Details |
+|---|---|---|
+| **SMS** | ✅ Buildable for hackathon | Sent via **Twilio** or **Africa's Talking SMS API** — a straightforward REST call from a Cloud Function, no lengthy approval process. This is realistically demoable live. |
+| **WhatsApp** | ⚠️ Documented, not implemented | Requires the **WhatsApp Business API** (via Meta directly, or a provider like Twilio/Africa's Talking that offers it). This needs business verification and API approval, which doesn't typically fit a hackathon timeline unless sandbox access is already set up beforehand. Documented here as the intended production channel. |
+
+**Message content:** user's name, trip start notice ("[Name] has started an e-hailing trip"), a live-location link (e.g. Google Maps link built from lat/long), and driver info if entered.
+
+**Delivery pattern:** a **single message with a link to a live-updating map page** at trip start, rather than repeated texts as the trip progresses — repeated SMS/WhatsApp messages for every location update would be noisy and costly at scale. The linked page (a simple web view backed by Firestore) updates in real time as the user's location changes, without needing new messages sent.
+
+**BlackLyst driver check — documented, not implemented:**
+- Requires a partnership or API access with BlackLyst, which does not currently have a public developer program (see Section 6).
+- Scoped for this submission as: *"user manually enters driver name/vehicle registration, app queries BlackLyst's reported-individuals database, and surfaces any matching reports before or during the trip."*
+- Not functional in the current prototype — the live-location and SOS parts of E-Hailing Mode are, using existing app infrastructure, but the actual BlackLyst lookup is spec-level only.
+
+### 4.8 Accessibility for Specially Abled Women
+
+SafeWalk is designed to support users with visual, hearing, and mobility impairments. Route calculation itself is **not customized** for mobility-impaired users — they follow the same routes as everyone else; accessibility support instead focuses on interaction, alerts, and timing.
+
+**Visual impairment:**
+- **Screen reader support** — accessibility labels (`accessibilityLabel`, `accessibilityRole`, `accessibilityHint`) applied across all existing screens, compatible with VoiceOver (iOS) and TalkBack (Android). Buildable for hackathon — mostly a labeling pass over existing UI, not new functionality.
+- **Volume-button SOS trigger takes on added importance here** — a visually impaired user may not be able to locate an on-screen SOS button reliably, making the hardware-button trigger (documented in Section 4.3) a meaningful accessibility feature, not just a "silent" one.
+- **Voice-command control** (find group, trigger SOS, check in) — documented as V2. Full voice UI is a substantial build on its own and out of hackathon scope.
+
+**Hearing impairment:**
+- **Vibration alerts** — check-in confirmations, approach notifications, and SOS confirmations trigger a distinct vibration pattern (via `expo-haptics` / React Native `Vibration` API) alongside or instead of sound. Buildable for hackathon.
+- **Text-based Guardian Angel alerts** — SMS/WhatsApp alerts (already designed for E-Hailing Mode, Section 4.7) work naturally for a deaf/hard-of-hearing Guardian Angel, since they don't depend on hearing a call or notification sound.
+- **In-app text-based group coordination** — the existing live location/status sharing between group members is already text/visual rather than voice-based, so no extra work is needed here.
+
+**Mobility impairment:**
+- **No custom route calculation** — mobility-impaired users walk the same routes as everyone else; SafeWalk does not attempt to calculate or source wheelchair-accessible paths.
+- **"Extra time needed" profile flag** — a simple user-set toggle that extends checkpoint wait windows (beyond the standard 1-minute timer) and adjusts group ETA expectations, so pace differences don't cause her to be skipped/rerouted unfairly. Buildable for hackathon as a profile setting affecting existing timer logic.
+- **Guardian Angel escort as a primary mode, not just fallback** — a mobility-impaired user can choose one-on-one Guardian Angel accompaniment as her default way of getting to her destination, rather than group matching being the assumed first option.
+
+**Hackathon scope summary:**
+
+| Feature | Status |
+|---|---|
+| Screen reader accessibility labels | ✅ Buildable |
+| Vibration alerts | ✅ Buildable |
+| "Extra time needed" flag + Guardian Angel-first mode | ✅ Buildable |
+| Voice-command control | ⚠️ Documented, V2 |
+| Wheelchair-accessible route data | ❌ Out of scope entirely — not planned even for V2 |
+
+---
+
+### 4.9 Multilingual Support
+
+South Africa has 11 official languages, and an English-only app risks excluding exactly the population SafeWalk is meant to protect — especially for high-stakes flows like SOS and USSD reporting, where clarity under stress matters most.
+
+**Languages supported in this build:** English, isiZulu, Afrikaans, Sesotho.
+
+**Approach:**
+- **i18next + react-i18next** for in-app translation — UI strings are pulled from per-language JSON translation files rather than hardcoded, so adding further languages later is a content task, not a rebuild.
+- **expo-localization** detects the phone's system language automatically as the default, with a manual override available in the app's settings for users who prefer a different language than their device's system setting.
+- All four languages are applied across the app's existing screens (Home, Group Match, Active Walk, Guardian Angels, Verification, Safety Map, Profile, Safety Resources, E-Hailing Mode).
+
+**Where this matters most beyond the app UI:**
+- **USSD menus** — arguably more important than the app UI itself, since USSD use skews toward more basic phones and, potentially, lower English fluency. USSD gateways (e.g. Africa's Talking) support multi-language menus, but every prompt, option, and confirmation message needs its own translation — documented as a required extension of the USSD spec (Section 4.6), not yet built.
+- **SOS distress message template & Guardian Angel alerts** — sent in the **victim's own selected language**, not auto-translated to the Guardian Angel's language. This is a deliberate choice: a translation layer in an emergency message introduces a risk of mistranslation at exactly the wrong moment, so the message is kept exactly as the victim set it up.
+- **Voice-command control** (already V2) — if built later, would need per-language speech recognition, making multilingual voice support a further-out V2 item layered on top of the existing V2 voice feature.
+
+**Hackathon scope summary:**
+
+| Feature | Status |
+|---|---|
+| In-app UI translation (English, isiZulu, Afrikaans, Sesotho) | ✅ Buildable via i18next |
+| Automatic device-language detection | ✅ Buildable via expo-localization |
+| Full 11-official-language coverage | ⚠️ Documented, V2 — translation content, not architecture, is the bottleneck |
+| Multilingual USSD menus | ⚠️ Documented, V2 — depends on USSD gateway integration (Section 4.6) |
+| Multilingual voice-command control | ⚠️ Documented, further-out V2 |
+
+---
+
+### 4.10 Group Chat (Active Walk Only)
+
+**Concept:** a real-time text chat scoped strictly to an active walk group — for coordination in the moment ("running 5 min late", "I see you"), not a persistent, ongoing group chat.
+
+- **Lifespan:** the chat exists only for the duration of the active walk. Once every member has checked in as safe, the chat closes/becomes read-only rather than staying open indefinitely — it's built for the walk, not for socializing afterward.
+- **Attached to walk history:** the chat log is saved alongside that walk's existing history record (member list, checkpoint timestamps), so if an incident is reported afterward, the conversation around that time can be reviewed as part of the same evidence trail.
+- **Quick-action buttons alongside free text:** one-tap options like "Running late," "I've arrived," and "Need help" — faster than typing, and more usable under time pressure than a bare text box.
+- **Reportable content:** a message in the group chat can be flagged directly, feeding into the same within-group incident-reporting flow described in Section 4.6, rather than existing as a separate, unmoderated space.
+- **Guardian Angels are not included in this chat** — it's scoped to walking-group members only, since Guardian Angels already receive their own separate alerts and updates; mixing the two would add noise without a clear benefit.
+- **Technical approach:** Firestore real-time listeners (same pattern used for live location sharing), with each active walk's group ID mapping to its own chat subcollection. New messages trigger a push notification via the same Firebase Cloud Messaging setup already planned for check-in/SOS alerts.
+
+**Hackathon scope summary:**
+
+| Feature | Status |
+|---|---|
+| Real-time text chat scoped to active walk | ✅ Buildable via Firestore real-time listeners |
+| Quick-action buttons (running late / arrived / need help) | ✅ Buildable |
+| Chat auto-closes after all members check in safe | ✅ Buildable |
+| Chat log attached to walk history record | ✅ Buildable |
+| In-chat message reporting tied to USSD incident flow | ⚠️ Depends on USSD gateway integration (Section 4.6) — documented as the intended connection |
+
+---
+
+## 5. MVP (Hackathon Demo) vs. V2 Scope
+
+**MVP — built and demoable:**
+- Destination-based group matching (mocked candidate data, real distance math)
+- Selfie verification (fully functional capture)
+- Guardian Angel list management (local state)
+- Live location tracking during an active walk
+- Arrival check-in with "I am safe" button
+- On-screen SOS trigger with live location + distress message flow
+- Safety map with seeded color-coded zones
+- 1-minute checkpoint wait/reroute logic (simplified)
+- E-hailing mode — live location sharing to Guardian Angels via SMS + SOS + check-in (manually triggered, SMS alerts buildable via Twilio/Africa's Talking)
+- Accessibility: screen reader labels, vibration alerts, "extra time needed" profile flag + Guardian Angel-first mode
+- Multilingual UI (English, isiZulu, Afrikaans, Sesotho) via i18next, with automatic device-language detection
+- Group chat scoped to active walk only, with quick-action buttons, auto-closing on check-in
+
+**V2 — roadmap, not built for demo:**
+- Volume-button silent SOS trigger (needs native module / Dev Build)
+- Dynamic mid-walk rerouting when a group splits
+- Passive learning of user departure/return times
+- Full ID document verification pipeline (face match against ID)
+- Real-time push notifications via Firebase Cloud Messaging
+- Persisted group history, flags, and Guardian Angel data in Firestore
+- USSD incident-reporting gateway (phone-lost fallback), including simultaneous Guardian Angel alert + police escalation logic
+- BlackLyst driver-check integration within E-Hailing Mode (requires partnership/API access; not currently available publicly)
+- WhatsApp alert delivery for E-Hailing Mode (requires WhatsApp Business API approval)
+- Voice-command control for accessibility (find group, trigger SOS, check in by voice)
+- Full 11-official-language coverage, multilingual USSD menus, and multilingual voice control
+
+### Summary: Documented but not implemented in this prototype
+
+For quick reference in a pitch or Q&A — these features are fully specified in this document and reflect real product thinking, but require infrastructure, partnerships, or native builds outside hackathon scope:
+
+| Feature | Why it's not in the build |
+|---|---|
+| Volume-button silent SOS | Requires a native module + Expo Dev Build, not available in Expo Go |
+| Dynamic mid-walk rerouting | Real-time routing engine — a substantial engineering project on its own |
+| Passive schedule learning | Needs weeks of usage data to be reliable; no cold-start solution yet |
+| Full ID verification (face match) | Needs a KYC-grade verification service, not a from-scratch build |
+| USSD incident reporting | Requires a telco/USSD gateway partnership (e.g. Africa's Talking) |
+| BlackLyst integration (general) | No public API or partner program currently exists |
+| BlackLyst driver-check (E-Hailing Mode) | Same API/partnership gap, plus no Uber/Bolt API to pull driver info automatically |
+| WhatsApp alert delivery | Requires WhatsApp Business API approval/business verification — not feasible within hackathon timeline |
+| Voice-command control | Full voice UI is a substantial build on its own; documented as V2 accessibility feature |
+| Full 11-language coverage / multilingual USSD | Translation content at that scale, plus USSD gateway multi-language support, is beyond hackathon scope; 4 languages (English, isiZulu, Afrikaans, Sesotho) built for the app UI |
+
+
+
+---
+
+## 6. Open Decisions Flagged During Planning
+
+| Area | Question |
+|---|---|
+| Group formation | Straight-line proximity vs. optimized pickup path for the 100–500m rule |
+| Guardian Angel escort | Does the Guardian Angel need their own safe route back after handoff? |
+| SOS protocol | Needs review with GBV support specialists before finalizing at-home abuse behavior — flagged as a priority before any real-world pilot |
+| Monetization | Free, subscription, or partnership-funded — affects Guardian Angel dispatch logistics |
+| Verification | Full ID-matching logic vs. simulated check for hackathon vs. real launch |
+| USSD reporting | Identification uses ID number (not phone number), since the victim may be using a borrowed phone. Incapacitated-victim scenario (bystander doesn't know the ID number) remains an open, unsolved edge case |
+| USSD reporting | Real gateway integration (Africa's Talking or similar) and telco partnership required before this is live outside a pitch/demo |
+| BlackLyst integration | No public API currently exists — requires direct outreach/partnership before any real data exchange is possible |
+| E-hailing mode | No public API from Uber/Bolt to auto-detect trips or pull driver details — user must manually enter driver info for any BlackLyst check |
+
+---
+
+## 7. Setup & Running the Prototype
+
+See `README.md` inside the project folder for full setup steps. In short:
+
+```bash
+npm install
+npx expo start
+```
+
+Scan the QR code with the Expo Go app (iOS: via Camera app; Android: in-app scanner) to preview live on your phone.
+
+---
+
+*This document consolidates the product planning and technical architecture discussions for SafeWalk. It is intended as a hackathon submission reference and a working spec for continued development.*

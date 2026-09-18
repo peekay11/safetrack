@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
+import '../services/app_session.dart';
 import '../theme/colors.dart';
 import '../theme/text_styles.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/sw_icons.dart';
-import 'active_walk_screen.dart';
+import 'destination_screen.dart';
 import 'guardians_screen.dart';
 import 'profile_screen.dart';
 import 'safety_map_screen.dart';
@@ -14,6 +15,9 @@ class HomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final user = AppSession.instance.currentUser;
+    final firstName = (user?.fullName ?? 'there').split(' ').first;
+
     return Scaffold(
       backgroundColor: SWColors.lavenderMid,
       body: Stack(
@@ -27,14 +31,14 @@ class HomeScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Good morning 👋', style: SWText.quicksand(size: 19, color: SWColors.deepPurple)),
+                  Text('Good morning, $firstName 👋', style: SWText.quicksand(size: 19, color: SWColors.deepPurple)),
                   const SizedBox(height: 2),
                   Text('Ready to find your walking group?',
                       style: SWText.inter(size: 12, color: SWColors.inkSoft)),
                   const SizedBox(height: 18),
                   GlassCard(
                     onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const ActiveWalkScreen()),
+                      MaterialPageRoute(builder: (_) => const DestinationScreen()),
                     ),
                     margin: const EdgeInsets.only(bottom: 14),
                     child: Column(

@@ -1,0 +1,20 @@
+name = "safetrack-backend"
+main = "src/index.ts"
+compatibility_date = "2024-09-18"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "safetrack-db"
+database_id = "0d3a703e-9c0a-4f4e-9a10-26845493de24"
+
+[[kv_namespaces]]
+binding = "CACHE_KV"
+id = "fc4b79df6356425b9588c917f5b5681f"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "safetrack-uploads"
+
+[vars]
+ENVIRONMENT = "production"
+JWT_SECRET = "safetrack-super-secure-production-secret-key-2026"

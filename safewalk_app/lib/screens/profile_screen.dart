@@ -1,14 +1,50 @@
 import 'package:flutter/material.dart';
+import '../services/api_client.dart';
+import '../services/api_service.dart';
+import '../services/app_session.dart';
 import '../theme/colors.dart';
 import '../theme/text_styles.dart';
 import '../widgets/sw_icons.dart';
+import 'auth_screen.dart';
 import 'resources_screen.dart';
 
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
 
   @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  Future<void> _refresh() async {
+    try {
+      final res = await Api.me();
+      await AppSession.instance.updateCurrentUser(res['user'] as Map<String, dynamic>);
+      if (mounted) setState(() {});
+    } on ApiException {
+      // Fall back to the cached profile already held in AppSession.
+    }
+  }
+
+  Future<void> _signOut() async {
+    await AppSession.instance.signOut();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const AuthScreen()),
+      (route) => false,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final user = AppSession.instance.currentUser;
+
     return Scaffold(
       backgroundColor: SWColors.pageBg,
       appBar: AppBar(
@@ -21,6 +57,11 @@ class ProfileScreen extends StatelessWidget {
             icon: SWIcons.safetyMap(stroke: '#7B2CBF', size: 20),
             onPressed: () => Navigator.of(context)
                 .push(MaterialPageRoute(builder: (_) => const ResourcesScreen())),
+          ),
+          IconButton(
+            tooltip: 'Sign out',
+            icon: const Icon(Icons.logout, color: SWColors.deepPurple, size: 20),
+            onPressed: _signOut,
           ),
         ],
       ),
@@ -40,9 +81,17 @@ class ProfileScreen extends StatelessWidget {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Your Name', style: SWText.quicksand(size: 15, color: SWColors.ink)),
+                    Text(user?.fullName ?? 'Your Name', style: SWText.quicksand(size: 15, color: SWColors.ink)),
                     const SizedBox(height: 3),
-                    Text('✅ Verified · ⭐ 4.9 rating', style: SWText.inter(size: 11, color: SWColors.inkSoft)),
+                    Text(
+                      user?.phoneNumber ?? '',
+                      style: SWText.inter(size: 11, color: SWColors.inkSoft),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      (user?.verified ?? false) ? '✅ Verified' : '⏳ Not yet verified',
+                      style: SWText.inter(size: 11, color: SWColors.inkSoft),
+                    ),
                   ],
                 ),
               ],

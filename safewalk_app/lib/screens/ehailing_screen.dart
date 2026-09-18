@@ -1,8 +1,14 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import '../services/api_client.dart';
+import '../services/api_service.dart';
+import '../services/location_service.dart';
 import '../theme/colors.dart';
 import '../theme/text_styles.dart';
 import '../widgets/sos_safe_buttons.dart';
 import 'confirm_screen.dart';
+
+const _providers = ['Uber', 'Bolt', 'InDrive', 'Other'];
 
 class EhailingScreen extends StatefulWidget {
   const EhailingScreen({super.key});
@@ -12,27 +18,98 @@ class EhailingScreen extends StatefulWidget {
 }
 
 class _EhailingScreenState extends State<EhailingScreen> {
-  bool _checking = false;
-  bool _checked = false;
+  final _driverCtrl = TextEditingController();
+  final _regCtrl = TextEditingController();
+  String _provider = _providers.first;
 
-  Future<void> _checkBlackLyst() async {
-    setState(() => _checking = true);
-    await Future.delayed(const Duration(milliseconds: 900));
-    if (!mounted) return;
-    setState(() {
-      _checking = false;
-      _checked = true;
-    });
+  bool _starting = false;
+  bool _ending = false;
+  String? _error;
+
+  String? _tripId;
+  bool _blacklystFlagged = false;
+  String? _blacklystDetails;
+  int _notifiedGuardians = 0;
+  Timer? _locationTimer;
+
+  @override
+  void dispose() {
+    _locationTimer?.cancel();
+    _driverCtrl.dispose();
+    _regCtrl.dispose();
+    super.dispose();
   }
 
-  void _sos() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('SOS alert sent to your Guardian Angels.')),
+  Future<void> _startTrip() async {
+    setState(() {
+      _starting = true;
+      _error = null;
+    });
+    try {
+      final (lat, lng) = await LocationService.getCurrent();
+      final res = await Api.startEhailing(
+        driverName: _driverCtrl.text.trim(),
+        vehicleRegistration: _regCtrl.text.trim(),
+        serviceProvider: _provider,
+        startLat: lat,
+        startLng: lng,
+      );
+      if (!mounted) return;
+      setState(() {
+        _tripId = res['trip_id'] as String;
+        final blacklyst = res['blacklyst'] as Map<String, dynamic>;
+        _blacklystFlagged = blacklyst['flagged'] == true;
+        _blacklystDetails = blacklyst['details'] as String?;
+        _notifiedGuardians = (res['notified_guardians_count'] as num?)?.toInt() ?? 0;
+      });
+      _locationTimer = Timer.periodic(const Duration(seconds: 15), (_) => _shareLocation());
+    } on ApiException catch (e) {
+      setState(() => _error = e.message);
+    } finally {
+      if (mounted) setState(() => _starting = false);
+    }
+  }
+
+  Future<void> _shareLocation() async {
+    if (_tripId == null) return;
+    final (lat, lng) = await LocationService.getCurrent();
+    try {
+      await Api.postEhailingLocation(_tripId!, lat, lng);
+    } on ApiException {
+      // Non-fatal — retried on next tick.
+    }
+  }
+
+  Future<void> _sos() async {
+    final (lat, lng) = await LocationService.getCurrent();
+    String message = 'SOS alert sent to your Guardian Angels.';
+    try {
+      final res = await Api.triggerSos(latitude: lat, longitude: lng, ehailingTripId: _tripId);
+      message = res['message'] as String? ?? message;
+    } on ApiException catch (e) {
+      message = 'Could not reach the server: ${e.message}';
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _endTrip() async {
+    setState(() => _ending = true);
+    try {
+      if (_tripId != null) await Api.checkinSafeEhailing(_tripId!);
+    } on ApiException {
+      // Still take the user to the confirmation screen.
+    }
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const ConfirmScreen()),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final active = _tripId != null;
+
     return Scaffold(
       backgroundColor: SWColors.lavender,
       body: SafeArea(
@@ -58,11 +135,16 @@ class _EhailingScreenState extends State<EhailingScreen> {
                       icon: const Icon(Icons.arrow_back, color: Colors.white),
                     ),
                   ),
-                  Text('🚕 E-Hailing Mode Active',
+                  Text(active ? '🚕 E-Hailing Mode Active' : '🚕 Start E-Hailing Mode',
                       style: SWText.quicksand(size: 13, color: Colors.white)),
                   const SizedBox(height: 2),
-                  Text('Live location sharing with Guardian Angels',
-                      style: SWText.inter(size: 9.5, color: Colors.white.withValues(alpha: 0.9))),
+                  Text(
+                    active
+                        ? 'Live location sharing with Guardian Angels'
+                        : 'We’ll check the vehicle and notify your Guardian Angels',
+                    style: SWText.inter(size: 9.5, color: Colors.white.withValues(alpha: 0.9)),
+                    textAlign: TextAlign.center,
+                  ),
                 ],
               ),
             ),
@@ -109,72 +191,125 @@ class _EhailingScreenState extends State<EhailingScreen> {
                         BoxShadow(color: SWColors.deepPurple.withValues(alpha: 0.08), blurRadius: 12, offset: const Offset(0, 4)),
                       ],
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _label('Driver Name'),
-                        _value('Sipho M.'),
-                        _label('Vehicle Registration'),
-                        _value('CA 123-456'),
-                        const SizedBox(height: 4),
-                        Material(
-                          color: Colors.transparent,
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(10),
-                            onTap: _checking ? null : _checkBlackLyst,
-                            child: Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                border: Border.all(color: SWColors.violet, width: 1.5),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Text(
-                                _checking ? 'Checking…' : 'Check BlackLyst',
-                                textAlign: TextAlign.center,
-                                style: SWText.inter(size: 10.5, weight: FontWeight.w700, color: SWColors.violet),
-                              ),
-                            ),
-                          ),
-                        ),
-                        if (_checked)
-                          Container(
-                            width: double.infinity,
-                            margin: const EdgeInsets.only(top: 8),
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: SWColors.safe.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text('✅ No reports found',
-                                textAlign: TextAlign.center,
-                                style: SWText.inter(size: 9.5, weight: FontWeight.w700, color: SWColors.safe)),
-                          ),
-                      ],
-                    ),
+                    child: active ? _activeDetails() : _setupForm(),
                   ),
+                  if (_error != null) ...[
+                    const SizedBox(height: 10),
+                    Text(_error!, style: SWText.inter(size: 11, color: SWColors.danger), textAlign: TextAlign.center),
+                  ],
                 ],
               ),
             ),
             Container(
               color: Colors.white,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  SosButton(onTap: _sos, size: 56),
-                  SafeButton(
-                    label: 'End Trip',
-                    onTap: () => Navigator.of(context).pushReplacement(
-                      MaterialPageRoute(builder: (_) => const ConfirmScreen()),
+              child: active
+                  ? Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        SosButton(onTap: _sos, size: 56),
+                        SafeButton(
+                          label: _ending ? 'Ending…' : 'End Trip',
+                          onTap: _ending ? () {} : _endTrip,
+                        ),
+                      ],
+                    )
+                  : SizedBox(
+                      width: double.infinity,
+                      child: Material(
+                        color: SWColors.violet,
+                        borderRadius: BorderRadius.circular(14),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(14),
+                          onTap: _starting ? null : _startTrip,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            child: _starting
+                                ? const Center(
+                                    child: SizedBox(
+                                      height: 16,
+                                      width: 16,
+                                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                    ),
+                                  )
+                                : Text(
+                                    'Start Trip & Notify Guardians',
+                                    textAlign: TextAlign.center,
+                                    style: SWText.quicksand(size: 13, color: Colors.white),
+                                  ),
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
-                ],
-              ),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _setupForm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _label('Service'),
+        Wrap(
+          spacing: 6,
+          children: _providers
+              .map((p) => ChoiceChip(
+                    label: Text(p, style: SWText.inter(size: 10.5, weight: FontWeight.w600)),
+                    selected: _provider == p,
+                    selectedColor: SWColors.violet.withValues(alpha: 0.2),
+                    onSelected: (_) => setState(() => _provider = p),
+                  ))
+              .toList(),
+        ),
+        const SizedBox(height: 10),
+        _label('Driver Name (optional)'),
+        _textField(_driverCtrl, 'e.g. Sipho M.'),
+        const SizedBox(height: 8),
+        _label('Vehicle Registration (optional)'),
+        _textField(_regCtrl, 'e.g. CA 123-456'),
+      ],
+    );
+  }
+
+  Widget _activeDetails() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _label('Driver Name'),
+        _value(_driverCtrl.text.trim().isEmpty ? 'Not provided' : _driverCtrl.text.trim()),
+        _label('Vehicle Registration'),
+        _value(_regCtrl.text.trim().isEmpty ? 'Not provided' : _regCtrl.text.trim()),
+        _label('Service'),
+        _value(_provider),
+        const SizedBox(height: 4),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: (_blacklystFlagged ? SWColors.danger : SWColors.safe).withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            _blacklystFlagged
+                ? '⚠️ ${_blacklystDetails ?? 'BlackLyst warning on this vehicle'}'
+                : '✅ No BlackLyst reports found',
+            textAlign: TextAlign.center,
+            style: SWText.inter(
+              size: 9.5,
+              weight: FontWeight.w700,
+              color: _blacklystFlagged ? SWColors.danger : SWColors.safe,
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '$_notifiedGuardians Guardian Angel${_notifiedGuardians == 1 ? '' : 's'} notified by SMS with your live tracking link.',
+          style: SWText.inter(size: 9.5, color: SWColors.inkSoft, height: 1.5),
+        ),
+      ],
     );
   }
 
@@ -188,4 +323,20 @@ class _EhailingScreenState extends State<EhailingScreen> {
         padding: const EdgeInsets.only(bottom: 8),
         child: Text(text, style: SWText.inter(size: 12, weight: FontWeight.w700, color: SWColors.ink)),
       );
+
+  Widget _textField(TextEditingController controller, String hint) {
+    return TextField(
+      controller: controller,
+      style: SWText.inter(size: 11, color: SWColors.ink),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: SWText.inter(size: 11, color: SWColors.inkSoft),
+        isDense: true,
+        filled: true,
+        fillColor: SWColors.lavender,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+      ),
+    );
+  }
 }
