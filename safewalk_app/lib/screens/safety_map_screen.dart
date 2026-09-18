@@ -39,6 +39,8 @@ class SafetyMapScreen extends StatefulWidget {
 
 class _SafetyMapScreenState extends State<SafetyMapScreen> {
   List<SafetyFlagModel> _flags = [];
+  List<HotspotModel> _hotspots = [];
+  bool _showHotspots = true;
   bool _loading = true;
   bool _usingMock = false;
   double? _lat;
@@ -58,9 +60,11 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
     _lng = lng;
     try {
       final flags = await Api.getSafetyFlags(latitude: lat, longitude: lng);
+      final hotspots = await Api.getHotspots(latitude: lat, longitude: lng);
       if (!mounted) return;
       setState(() {
         _flags = flags;
+        _hotspots = hotspots;
         _usingMock = false;
         _loading = false;
       });
@@ -68,10 +72,17 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
       if (!mounted) return;
       setState(() {
         _flags = mockSafetyFlags;
+        _hotspots = [];
         _usingMock = true;
         _loading = false;
       });
     }
+  }
+
+  void _showHotspotDetails(HotspotModel h) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('${h.walkerCount} SafeWalk users have started a walk near here recently.')),
+    );
   }
 
   void _showFlagDetails(SafetyFlagModel flag) {
@@ -183,6 +194,16 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
         elevation: 0,
         iconTheme: const IconThemeData(color: SWColors.deepPurple),
         title: Text('Safety Map', style: SWText.quicksand(size: 15, color: SWColors.deepPurple)),
+        actions: [
+          IconButton(
+            tooltip: _showHotspots ? 'Hide popular pickup spots' : 'Show popular pickup spots',
+            icon: Icon(
+              _showHotspots ? Icons.local_fire_department : Icons.local_fire_department_outlined,
+              color: const Color(0xFF2B9CD8),
+            ),
+            onPressed: () => setState(() => _showHotspots = !_showHotspots),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton(
         backgroundColor: SWColors.violet,
@@ -207,6 +228,12 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
                     child: SafeWalkMap(
                       center: LatLng(_lat!, _lng!),
                       zoom: 14,
+                      circles: _showHotspots
+                          ? [
+                              for (final h in _hotspots)
+                                hotspotCircle(point: LatLng(h.latitude, h.longitude), walkerCount: h.walkerCount),
+                            ]
+                          : [],
                       markers: [
                         pinMarker(point: LatLng(_lat!, _lng!), color: SWColors.violet, size: 26),
                         for (final flag in _flags)
@@ -215,20 +242,28 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
                             color: _severityColor(flag.severity),
                             onTap: () => _showFlagDetails(flag),
                           ),
+                        if (_showHotspots)
+                          for (final h in _hotspots)
+                            hotspotTapTarget(
+                              point: LatLng(h.latitude, h.longitude),
+                              onTap: () => _showHotspotDetails(h),
+                            ),
                       ],
                     ),
                   ),
                   Container(
                     color: Colors.white,
                     padding: const EdgeInsets.all(14),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                    child: Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: 16,
+                      runSpacing: 6,
                       children: [
                         _Legend(color: SWColors.danger, label: 'Red · $severe'),
-                        const SizedBox(width: 16),
                         _Legend(color: SWColors.orange, label: 'Orange · $medium'),
-                        const SizedBox(width: 16),
                         _Legend(color: SWColors.safe, label: 'Clear · $low'),
+                        if (_showHotspots)
+                          _Legend(color: const Color(0xFF2B9CD8), label: 'Popular pickup · ${_hotspots.length}'),
                       ],
                     ),
                   ),

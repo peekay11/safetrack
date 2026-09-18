@@ -92,6 +92,50 @@ class Api {
         if (taxiPlate != null) 'taxi_plate': taxiPlate,
       });
 
+  static Future<List<GroupSummary>> listGroups({
+    required String destinationId,
+    String groupType = 'walk',
+    String? taxiPlate,
+  }) async {
+    final res = await _c.get('/api/groups', query: {
+      'destination_id': destinationId,
+      'group_type': groupType,
+      if (taxiPlate != null) 'taxi_plate': taxiPlate,
+    });
+    return (res['groups'] as List)
+        .map((e) => GroupSummary.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  static Future<Map<String, dynamic>> createGroup({
+    String? destinationId,
+    String? customDestinationName,
+    double? customDestinationLat,
+    double? customDestinationLng,
+    String? customDestinationAddress,
+    required double latitude,
+    required double longitude,
+    String groupType = 'walk',
+    String? taxiPlate,
+  }) =>
+      _c.post('/api/groups/create', {
+        if (destinationId != null) 'destination_id': destinationId,
+        if (destinationId == null && customDestinationName != null)
+          'custom_destination': {
+            'name': customDestinationName,
+            'latitude': customDestinationLat,
+            'longitude': customDestinationLng,
+            if (customDestinationAddress != null) 'address': customDestinationAddress,
+          },
+        'latitude': latitude,
+        'longitude': longitude,
+        'group_type': groupType,
+        if (taxiPlate != null) 'taxi_plate': taxiPlate,
+      });
+
+  static Future<Map<String, dynamic>> joinGroup(String groupId, double latitude, double longitude) =>
+      _c.post('/api/groups/$groupId/join', {'latitude': latitude, 'longitude': longitude});
+
   static Future<Map<String, dynamic>> getGroup(String groupId) => _c.get('/api/groups/$groupId');
 
   static Future<void> postGroupLocation(String groupId, double latitude, double longitude) =>
@@ -201,6 +245,21 @@ class Api {
       if (description != null && description.isNotEmpty) 'description': description,
     });
     return SafetyFlagModel.fromJson(res['flag'] as Map<String, dynamic>);
+  }
+
+  static Future<List<HotspotModel>> getHotspots({
+    required double latitude,
+    required double longitude,
+    double radiusKm = 10,
+  }) async {
+    final res = await _c.get('/api/safety-map/hotspots', query: {
+      'lat': latitude,
+      'lng': longitude,
+      'radius': radiusKm,
+    });
+    return (res['hotspots'] as List)
+        .map((e) => HotspotModel.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   // --- Verification --------------------------------------------------------

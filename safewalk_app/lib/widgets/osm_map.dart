@@ -12,6 +12,7 @@ class SafeWalkMap extends StatelessWidget {
     super.key,
     required this.center,
     required this.markers,
+    this.circles = const [],
     this.zoom = 15,
     this.onTap,
     this.mapController,
@@ -19,6 +20,7 @@ class SafeWalkMap extends StatelessWidget {
 
   final LatLng center;
   final List<Marker> markers;
+  final List<CircleMarker> circles;
   final double zoom;
   final void Function(LatLng point)? onTap;
   final MapController? mapController;
@@ -38,6 +40,7 @@ class SafeWalkMap extends StatelessWidget {
           userAgentPackageName: 'com.safewalk.safewalk',
           maxZoom: 19,
         ),
+        if (circles.isNotEmpty) CircleLayer(circles: circles),
         MarkerLayer(markers: markers),
         const Positioned(
           right: 4,
@@ -47,6 +50,31 @@ class SafeWalkMap extends StatelessWidget {
       ],
     );
   }
+}
+
+/// A translucent "popular pickup spot" hotspot circle, sized by how many
+/// SafeWalk users have started a walk/taxi group there.
+CircleMarker hotspotCircle({required LatLng point, required int walkerCount}) {
+  final radius = (12 + walkerCount * 3).clamp(12, 40).toDouble();
+  return CircleMarker(
+    point: point,
+    radius: radius,
+    useRadiusInMeter: false,
+    color: const Color(0xFF2B9CD8).withValues(alpha: 0.25),
+    borderColor: const Color(0xFF2B9CD8),
+    borderStrokeWidth: 1.5,
+  );
+}
+
+/// An invisible tap target laid over a [hotspotCircle] so it can be tapped
+/// like a marker (CircleMarker itself has no tap handling).
+Marker hotspotTapTarget({required LatLng point, double size = 26, VoidCallback? onTap}) {
+  return Marker(
+    point: point,
+    width: size,
+    height: size,
+    child: GestureDetector(onTap: onTap, child: const SizedBox.expand()),
+  );
 }
 
 /// Builds a teardrop pin marker at [point] in [color], matching the app's

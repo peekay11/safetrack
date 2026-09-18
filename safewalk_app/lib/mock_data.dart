@@ -7,6 +7,10 @@ import 'models.dart';
 
 const mockSystemSender = 'system';
 
+List<GroupSummary> get mockGroupSummaries => [
+      GroupSummary(id: 'mock-grp-1', status: 'forming', memberCount: 2, capacity: 6, groupType: 'walk'),
+    ];
+
 List<Destination> get mockDestinations => [
       Destination(
         id: 'mock-dest-bree',

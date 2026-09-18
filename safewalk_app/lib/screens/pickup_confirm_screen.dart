@@ -6,12 +6,16 @@ import '../services/api_service.dart';
 import '../services/location_service.dart';
 import '../theme/colors.dart';
 import '../theme/text_styles.dart';
+import '../widgets/guardian_alert_dialog.dart';
 import '../widgets/osm_map.dart';
 import 'active_walk_screen.dart';
+import 'group_list_screen.dart';
 
 /// Last step before matching: shows the pickup point on a real map (where
-/// the app thinks the user is right now) and lets them tap to correct it,
-/// then calls /api/groups/match with the chosen destination + mode.
+/// the app thinks the user is right now) and lets them tap to correct it.
+/// A preset destination goes on to browse/join/create a group; a
+/// user-entered custom destination — where no one else could possibly be
+/// going yet — creates a fresh group directly.
 class PickupConfirmScreen extends StatefulWidget {
   const PickupConfirmScreen({
     super.key,
@@ -31,8 +35,7 @@ class PickupConfirmScreen extends StatefulWidget {
 class _PickupConfirmScreenState extends State<PickupConfirmScreen> {
   double? _lat;
   double? _lng;
-  bool _matching = false;
-  String? _error;
+  bool _busy = false;
 
   bool get _isTaxi => widget.groupType == 'taxi';
 
@@ -51,12 +54,23 @@ class _PickupConfirmScreenState extends State<PickupConfirmScreen> {
     });
   }
 
+  void _enterActiveWalk(String groupId) {
+    final d = widget.destination;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => ActiveWalkScreen(
+          groupId: groupId,
+          destinationName: d.name,
+          destinationLat: d.latitude,
+          destinationLng: d.longitude,
+        ),
+      ),
+    );
+  }
+
   Future<void> _confirm() async {
     if (_lat == null || _lng == null) return;
-    setState(() {
-      _matching = true;
-      _error = null;
-    });
+    setState(() => _busy = true);
 
     final d = widget.destination;
     final destinationIsMock = d.id != null && d.id!.startsWith('mock-');
@@ -64,29 +78,39 @@ class _PickupConfirmScreenState extends State<PickupConfirmScreen> {
     try {
       if (destinationIsMock) throw ApiException('offline demo destination');
 
-      final res = await Api.matchGroup(
-        destinationId: d.isCustom ? null : d.id,
-        customDestinationName: d.isCustom ? d.name : null,
-        customDestinationLat: d.isCustom ? d.latitude : null,
-        customDestinationLng: d.isCustom ? d.longitude : null,
-        customDestinationAddress: d.isCustom ? d.address : null,
-        latitude: _lat!,
-        longitude: _lng!,
-        groupType: widget.groupType,
-        taxiPlate: widget.taxiPlate,
-      );
-
-      if (res['fallback_to_guardian'] == true && mounted) {
-        await _showGuardianAlertDialog(res['guardian_notification'] as Map<String, dynamic>?);
+      if (d.isCustom) {
+        // Nobody else could already be heading to a spot the user just
+        // typed themselves — skip browsing and create the group directly.
+        final res = await Api.createGroup(
+          customDestinationName: d.name,
+          customDestinationLat: d.latitude,
+          customDestinationLng: d.longitude,
+          customDestinationAddress: d.address,
+          latitude: _lat!,
+          longitude: _lng!,
+          groupType: widget.groupType,
+          taxiPlate: widget.taxiPlate,
+        );
+        if (res['fallback_to_guardian'] == true && mounted) {
+          await showGuardianAlertDialog(context, isTaxi: _isTaxi, notification: res['guardian_notification']);
+        }
+        if (!mounted) return;
+        _enterActiveWalk(res['group_id'] as String);
+        return;
       }
+
       if (!mounted) return;
-      Navigator.of(context).pushReplacement(
+      Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) => ActiveWalkScreen(
-            groupId: res['group_id'] as String,
+          builder: (_) => GroupListScreen(
+            destinationId: d.id!,
             destinationName: d.name,
             destinationLat: d.latitude,
             destinationLng: d.longitude,
+            pickupLat: _lat!,
+            pickupLng: _lng!,
+            groupType: widget.groupType,
+            taxiPlate: widget.taxiPlate,
           ),
         ),
       );
@@ -95,63 +119,10 @@ class _PickupConfirmScreenState extends State<PickupConfirmScreen> {
       // demo) — still let the user walk through the experience.
       if (!mounted) return;
       final key = d.isCustom ? 'custom-${d.name}' : (d.id ?? 'unknown');
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => ActiveWalkScreen(
-            groupId: 'mock-group-$key-${widget.groupType}',
-            destinationName: d.name,
-            destinationLat: d.latitude,
-            destinationLng: d.longitude,
-          ),
-        ),
-      );
+      _enterActiveWalk('mock-group-$key-${widget.groupType}');
     } finally {
-      if (mounted) setState(() => _matching = false);
+      if (mounted) setState(() => _busy = false);
     }
-  }
-
-  Future<void> _showGuardianAlertDialog(Map<String, dynamic>? notification) async {
-    final guardians = ((notification?['notified_guardians'] as List?) ?? [])
-        .cast<Map<String, dynamic>>();
-
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Guardian Angel alerted', style: SWText.quicksand(size: 15, color: SWColors.deepPurple)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              guardians.isEmpty
-                  ? "We couldn't find a ${_isTaxi ? 'taxi' : 'walking'} group yet, so we've sent your drop-off point via SMS/WhatsApp — but you don't have a Guardian Angel saved to receive it."
-                  : "We couldn't find a ${_isTaxi ? 'taxi' : 'walking'} group yet, so we've sent your drop-off point via SMS/WhatsApp to:",
-              style: SWText.inter(size: 12, color: SWColors.inkSoft, height: 1.5),
-            ),
-            for (final g in guardians)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Row(
-                  children: [
-                    const Icon(Icons.check_circle, size: 14, color: SWColors.safe),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text('${g['name']} · ${g['phone_number']}',
-                          style: SWText.inter(size: 11, weight: FontWeight.w600, color: SWColors.ink)),
-                    ),
-                  ],
-                ),
-              ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text('OK, continue', style: SWText.quicksand(size: 13, color: SWColors.violet)),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
@@ -215,11 +186,6 @@ class _PickupConfirmScreenState extends State<PickupConfirmScreen> {
                       ],
                     ),
             ),
-            if (_error != null)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
-                child: Text(_error!, style: SWText.inter(size: 11, color: SWColors.danger)),
-              ),
             Container(
               color: Colors.white,
               padding: const EdgeInsets.all(16),
@@ -230,10 +196,10 @@ class _PickupConfirmScreenState extends State<PickupConfirmScreen> {
                   borderRadius: BorderRadius.circular(14),
                   child: InkWell(
                     borderRadius: BorderRadius.circular(14),
-                    onTap: (_matching || _lat == null) ? null : _confirm,
+                    onTap: (_busy || _lat == null) ? null : _confirm,
                     child: Padding(
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      child: _matching
+                      child: _busy
                           ? const Center(
                               child: SizedBox(
                                 height: 16,
@@ -242,7 +208,7 @@ class _PickupConfirmScreenState extends State<PickupConfirmScreen> {
                               ),
                             )
                           : Text(
-                              'Confirm Pickup & Find Group',
+                              widget.destination.isCustom ? 'Confirm Pickup & Create Group' : 'Confirm Pickup & Continue',
                               textAlign: TextAlign.center,
                               style: SWText.quicksand(size: 13, color: Colors.white),
                             ),

@@ -207,3 +207,49 @@ class SafetyFlagModel {
         description: json['description'] as String?,
       );
 }
+
+/// A popular SafeWalk pickup spot, derived from real matching activity.
+class HotspotModel {
+  HotspotModel({required this.latitude, required this.longitude, required this.walkerCount});
+
+  final double latitude;
+  final double longitude;
+  final int walkerCount;
+
+  factory HotspotModel.fromJson(Map<String, dynamic> json) => HotspotModel(
+        latitude: _asDouble(json['latitude']),
+        longitude: _asDouble(json['longitude']),
+        walkerCount: (json['walker_count'] as num).toInt(),
+      );
+}
+
+/// One row in the "browse groups heading here" list.
+class GroupSummary {
+  GroupSummary({
+    required this.id,
+    required this.status,
+    required this.memberCount,
+    required this.capacity,
+    required this.groupType,
+    this.taxiPlate,
+    this.departureTime,
+  });
+
+  final String id;
+  final String status;
+  final int memberCount;
+  final int capacity;
+  final String groupType;
+  final String? taxiPlate;
+  final String? departureTime;
+
+  factory GroupSummary.fromJson(Map<String, dynamic> json) => GroupSummary(
+        id: json['id'] as String,
+        status: json['status'] as String? ?? 'forming',
+        memberCount: (json['member_count'] as num?)?.toInt() ?? 0,
+        capacity: (json['capacity'] as num?)?.toInt() ?? 6,
+        groupType: json['group_type'] as String? ?? 'walk',
+        taxiPlate: json['taxi_plate'] as String?,
+        departureTime: json['departure_time'] as String?,
+      );
+}

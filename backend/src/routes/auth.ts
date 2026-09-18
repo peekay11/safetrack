@@ -7,6 +7,19 @@ import { sendSms } from '../utils/sms';
 
 export const authRoutes = new Hono<{ Bindings: Env }>();
 
+// Normalizes a phone number so the same person typing it differently across
+// sessions ("+27 82 555 1234", "0825551234", "+27825551234", ...) always
+// resolves to the same OTP entry and the same user account.
+function normalizePhone(raw: string): string {
+  let digits = raw.replace(/[^\d+]/g, '');
+  if (digits.startsWith('0')) {
+    digits = `+27${digits.slice(1)}`;
+  } else if (!digits.startsWith('+')) {
+    digits = `+${digits}`;
+  }
+  return digits;
+}
+
 // Simple OTP generator / sender (sends real SMS via Africa's Talking / Twilio or returns OTP in dev)
 authRoutes.post(
   '/send-otp',
@@ -17,12 +30,12 @@ authRoutes.post(
     })
   ),
   async (c) => {
-    const { phone_number } = c.req.valid('json');
+    const phone_number = normalizePhone(c.req.valid('json').phone_number);
     // Generate 6 digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // Store in KV with 5 minute expiration
-    await c.env.CACHE_KV.put(`otp:${phone_number}`, otp, { expirationTtl: 300 });
+    // Store in KV with 10 minute expiration
+    await c.env.CACHE_KV.put(`otp:${phone_number}`, otp, { expirationTtl: 600 });
 
     // Send SMS via configured gateway
     const smsRes = await sendSms(c.env, {
@@ -52,7 +65,8 @@ authRoutes.post(
     })
   ),
   async (c) => {
-    const { phone_number, code, full_name } = c.req.valid('json');
+    const { code, full_name } = c.req.valid('json');
+    const phone_number = normalizePhone(c.req.valid('json').phone_number);
 
     const storedOtp = await c.env.CACHE_KV.get(`otp:${phone_number}`);
     const isDevDefault = code === '123456'; // convenient fallback for tests/demo

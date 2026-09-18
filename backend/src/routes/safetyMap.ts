@@ -6,6 +6,32 @@ import { haversineDistanceKm } from '../utils/geo';
 
 export const safetyMapRoutes = new Hono<{ Bindings: Env }>();
 
+// Popular SafeWalk pickup spots, derived from real matching activity
+// (group_members.pickup_lat/lng) rather than manual reports — grid-rounded
+// to ~100m cells so nearby pickups cluster into one hotspot.
+safetyMapRoutes.get('/hotspots', async (c) => {
+  const lat = parseFloat(c.req.query('lat') || '-26.2041');
+  const lng = parseFloat(c.req.query('lng') || '28.0473');
+  const radiusKm = parseFloat(c.req.query('radius') || '10');
+
+  const { results } = await c.env.DB.prepare(
+    `SELECT ROUND(pickup_lat, 3) as latitude, ROUND(pickup_lng, 3) as longitude, COUNT(*) as walker_count
+     FROM group_members
+     WHERE pickup_lat IS NOT NULL AND pickup_lng IS NOT NULL
+     GROUP BY latitude, longitude
+     HAVING walker_count >= 2
+     ORDER BY walker_count DESC
+     LIMIT 50`
+  ).all();
+
+  const nearbyHotspots = (results as any[]).filter((h) => {
+    const dist = haversineDistanceKm(lat, lng, h.latitude, h.longitude);
+    return dist <= radiusKm;
+  });
+
+  return c.json({ success: true, count: nearbyHotspots.length, hotspots: nearbyHotspots });
+});
+
 async function getUserId(c: any): Promise<string | null> {
   const authHeader = c.req.header('Authorization');
   if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
